@@ -1,0 +1,3 @@
+# Use a monorepo with separate desktop and server applications
+
+Echo will use one repository with separate top-level areas for the Wails desktop app, the Gin business service, deployment assets, and documentation. The desktop app belongs under `apps/desktop`, the business service under `services/api`, and server deployment files under `deploy/server`; LiveKit remains an external service in deployment rather than code embedded in the business service. Shared packages or generated API clients are deferred until API payloads stabilize, so MVP implementation can keep desktop and server boundaries clear without premature monorepo tooling.

@@ -1,0 +1,3 @@
+# Enforce temporary room lifecycle in the business service
+
+The business service is authoritative for temporary room lifecycle. SQLite will persist room creation time, active/expired state, invite code, last-empty time, and expiry time; in-memory state is only an acceleration for online members and connections. When the last member leaves or finishes reconnect failure, the service records `last_empty_at` and `expires_at = now + 30 minutes`; rejoin before expiry clears those fields, while joining after expiry marks the room expired and invalidates the invite code. LiveKit room lifecycle is not used as the product room lifecycle.

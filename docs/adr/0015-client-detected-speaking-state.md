@@ -1,0 +1,3 @@
+# Use client-detected speaking state for member highlights
+
+Speaking highlights are a product UI signal, so clients will detect their own speaking state from push-to-talk/free-talk mode, mute state, and local microphone input activity, then report changes to the business service over WebSocket. The business service will throttle and broadcast speaking state to room members, with clients allowed to keep highlights briefly after speech stops to avoid flicker. LiveKit media state can assist local detection, but LiveKit server events are not the authoritative source for the product's speaking indicator.

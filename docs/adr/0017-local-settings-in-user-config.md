@@ -1,0 +1,3 @@
+# Store user preferences locally
+
+Echo will store local settings in the current Windows user's application configuration directory through the Wails/Go layer. This includes anonymous identity, nickname, random avatar seed or ID, push-to-talk shortcut, selected microphone, selected output device, voice mode preference, and overall output volume. The business service will not store user preferences or cloud profiles; it only receives the current room-facing nickname/avatar/member state needed for an active room. Room history, auto-join, close-window preference, and account data remain out of MVP scope.

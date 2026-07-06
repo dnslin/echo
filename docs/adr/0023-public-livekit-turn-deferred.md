@@ -1,0 +1,3 @@
+# Defer TURN for public single-node LiveKit unless beta proves it is needed
+
+The v0.1 deployment will run LiveKit on a public server with a public domain, TLS/WSS, external IP configuration, and the required LiveKit HTTP/WSS, RTC UDP range, and TCP fallback ports opened. Echo will keep normal WebRTC ICE/STUN behavior, but it will not deploy or enable TURN/coturn by default because the SFU itself is publicly reachable and the invited beta does not promise weak or restricted-network coverage. If the 20-50 person beta shows media connection failures from specific NAT, firewall, or UDP-blocked networks, TURN will be added as a targeted connectivity fallback with its bandwidth and operational cost made explicit.

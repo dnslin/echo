@@ -1,0 +1,3 @@
+# Use the existing external Nginx as the edge proxy
+
+Echo v0.1 will use the existing external Nginx deployment as the public edge proxy instead of adding Caddy, Traefik, or an Nginx container to the Docker Compose stack. Nginx will terminate TLS and route HTTPS/WSS traffic to the business service and LiveKit upstreams, preserving the WebSocket upgrade headers required for room state streams and LiveKit signaling. The Compose stack remains responsible for the business service, SQLite volume, LiveKit, and logs; edge routing, certificates, and public domain configuration remain outside the application Compose file.

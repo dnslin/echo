@@ -1,0 +1,3 @@
+# Maintain HTTP APIs with OpenAPI and document WebSocket messages separately
+
+Echo will maintain the business service HTTP contract in an OpenAPI 3.1 document, covering room creation, room join, room leave, room snapshot, LiveKit token issuance or join responses, and health checks. Room WebSocket messages will be documented separately with explicit message types and payload schemas because they represent an event stream rather than request/response HTTP resources. MVP will not require generated clients at first; code generation can be introduced later if manually maintained payload types begin to drift.

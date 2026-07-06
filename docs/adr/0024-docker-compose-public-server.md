@@ -1,0 +1,3 @@
+# Deploy server components with Docker Compose on one public server
+
+The v0.1 server stack will run on a single public server using Docker Compose. The stack will include the Gin/GORM business service, a single-node LiveKit instance, and a reverse proxy for HTTPS/WSS and domain routing; SQLite data and server logs will be mounted to persistent host directories or volumes. Kubernetes, multiple machines, managed databases, and multi-instance service deployment are deferred because the invited beta is intentionally small and the deployment should remain reproducible without adding distributed operations.

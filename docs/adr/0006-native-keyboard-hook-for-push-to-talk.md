@@ -1,0 +1,3 @@
+# Use a native keyboard hook for push-to-talk if Wails shortcuts are insufficient
+
+Push-to-talk must support press-to-send and release-to-stop while games are in the foreground, so echo will not degrade this interaction into a toggle if Wails 3 global shortcut APIs cannot reliably expose keydown and keyup semantics. The desktop shell remains Wails 3; if its shortcut APIs are insufficient, the Go layer will use a Windows low-level keyboard hook and publish pressed/released state to the frontend, which will control the LiveKit audio track state. Electron remains rejected as a fallback for this requirement.

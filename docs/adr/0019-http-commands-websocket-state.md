@@ -1,0 +1,3 @@
+# Use HTTP commands and WebSocket room state streams
+
+Echo clients will use HTTP for command-style operations such as creating rooms, joining rooms, leaving rooms, fetching room snapshots, health checks, and receiving LiveKit join tokens. Once in a room, clients will use a room WebSocket for product state updates such as member join/leave, reconnecting/disconnected state, mute changes, speaking changes, server errors, and resync requests. This keeps request/response business operations separate from realtime room state and avoids turning WebSocket into an unstructured RPC layer or relying on polling for member state.

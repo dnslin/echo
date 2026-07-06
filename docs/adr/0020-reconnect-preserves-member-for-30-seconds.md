@@ -1,0 +1,3 @@
+# Preserve disconnected members for a 30-second reconnect window
+
+When a member connection drops, the business service will keep the member ID, list position, and room slot for up to 30 seconds while marking the member as reconnecting and clearing speaking state. If the same anonymous identity reconnects to the same product room within that window, the service restores the original member record and the client obtains a fresh LiveKit token for media reconnection. After 30 seconds, the member is removed, the room slot is released, and if the room becomes empty the 30-minute temporary-room retention timer starts; later joins are treated as new joins.

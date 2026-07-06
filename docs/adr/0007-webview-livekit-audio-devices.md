@@ -1,0 +1,3 @@
+# Keep audio capture and playback in WebView and LiveKit
+
+MVP will use WebView2 browser media APIs and LiveKit JS for microphone capture, audio track publishing, remote audio playback, and device switching wherever supported. The Go/Wails layer will persist preferences and provide native shell integration, but it will not implement a separate audio capture, encoding, playback, or mixing pipeline. Output device selection is a required Wails/WebView2 spike item because browser support can be less predictable than microphone capture; if it is not stable, the product must explicitly choose a scoped fallback rather than creating a second audio stack.

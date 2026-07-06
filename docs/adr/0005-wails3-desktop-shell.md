@@ -1,0 +1,3 @@
+# Use Wails 3 for the desktop shell
+
+MVP will use Wails 3 as echo's Windows desktop shell and will not use Electron. Wails 3 matches the product's lightweight direction while still offering documented Windows support for WebView2, system tray, window lifecycle hooks, global shortcuts, and packaging primitives; WebRTC voice remains handled in the WebView through LiveKit. Electron was rejected despite its mature WebRTC path because the product direction explicitly values a lighter native-feeling shell, and future Wails-specific gaps should be handled through Go/native integration or scoped technical validation rather than an Electron fallback.
