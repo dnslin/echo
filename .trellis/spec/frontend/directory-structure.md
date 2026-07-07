@@ -156,3 +156,132 @@ var assets embed.FS
 ```
 
 Why correct: it provides the Wails shell without inventing product behavior, lets default Go compilation use tracked fallback assets, and lets Wails production builds embed the generated frontend bundle.
+
+---
+
+## Scenario: Desktop device/tray spike
+
+### 1. Scope / Trigger
+
+- Trigger: validating or extending `apps/desktop/**` behavior that touches WebView2 media devices, Wails system tray, or close-window lifecycle.
+- Applies to `apps/desktop/main.go`, `apps/desktop/frontend/src/spike/**`, spike documentation under `docs/spikes/**`, and frontend tests for browser media APIs.
+- This is a code-spec because tray lifecycle, browser media capability detection, and generated/fallback asset behavior are executable runtime contracts.
+
+### 2. Signatures
+
+- Wails close-to-tray hook:
+
+```go
+mainWindow.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+	if allowQuit.Load() {
+		return
+	}
+	mainWindow.Hide()
+	event.Cancel()
+})
+```
+
+- Wails system tray setup:
+
+```go
+tray := app.SystemTray.New()
+tray.SetTooltip("echo")
+tray.AttachWindow(mainWindow).WindowOffset(5).SetMenu(menu)
+```
+
+- Media-device wrapper signatures:
+
+```typescript
+listMediaDevices(): Promise<{ microphones: EchoAudioDevice[]; outputs: EchoAudioDevice[] }>
+requestMicrophone(deviceId?: string): Promise<MediaStream>
+createLevelMeter(stream: MediaStream, onLevel: (level: number) => void): () => void
+applyOutputDevice(audio: HTMLMediaElement, sinkId: string): Promise<OutputDeviceResult>
+```
+
+### 3. Contracts
+
+- `app.SystemTray.New()` registers the tray with the application and defers `SystemTray.Run()` until `app.Run()` when created before startup; do not add a manual `tray.Run()` call before `app.Run()`.
+- Ordinary window close must hide the window and cancel the close event. True application exit must set an explicit quit flag first and then call the application quit path.
+- WebView2/browser media access belongs in a dedicated wrapper under `frontend/src/spike/**` or a future media module. Components must not scatter raw `navigator.mediaDevices`, `AudioContext`, or `setSinkId` calls.
+- Output device selection is capability-based: use `HTMLMediaElement.setSinkId` only when present; if absent, report the fallback to the system default output device. Do not add Go audio playback to compensate.
+- Switching microphones must stop the old stream before or during replacement so failed switches cannot leave an unintended capture stream active behind new UI state.
+- Spike documentation must separate automated validation from Windows HITL validation.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `WindowClosing` fires from clicking X | Call `Hide()` and `event.Cancel()`; process remains available from tray. |
+| Tray “显示主窗口” clicked | Call `Show()` and `Focus()` on the main window. |
+| Tray “退出 echo” clicked | Set quit flag before `app.Quit()` so the close hook does not cancel exit. |
+| `navigator.mediaDevices` missing | Show a clear unsupported message; tests mock this branch. |
+| `getUserMedia` rejects | Show `无法使用麦克风，请检查系统权限`; do not crash or leave stale level state. |
+| `setSinkId` missing | Report `当前 WebView2 不支持指定输出设备，已跟随系统默认输出设备。` and document fallback. |
+| Only one output device exists | Provide an explicit “验证输出设备切换” action; do not rely only on select change events. |
+| `frontend/dist` is absent | `go test ./...` in `apps/desktop` must still compile through fallback embedded assets. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: device/tray spike code is isolated under `frontend/src/spike/**`, browser media access is centralized, close-to-tray uses a cancelable Wails window hook, and automated tests cover both supported and unsupported output-device paths.
+- Base: spike page validates devices and tray lifecycle but remains non-product UI; manual Windows checks are recorded as `pending HITL` until performed.
+- Bad: implementing a formal settings page during the spike, adding output test audio, adding member volume controls, using Go to capture/play voice audio, or assuming `setSinkId` exists without an unsupported branch.
+
+### 6. Tests Required
+
+- From `apps/desktop/frontend`: `npm run test:run`.
+  - Assert audio input/output enumeration projection.
+  - Assert empty device lists and permission failure UI.
+  - Assert input-level math clamps to 0-100.
+  - Assert Web Audio cleanup disconnects nodes and closes context.
+  - Assert output-device unsupported, supported success, and supported failure paths.
+  - Assert the page can explicitly apply the selected output device when only one output exists.
+- From `apps/desktop/frontend`: `npm run build`.
+- From `apps/desktop`: `go test ./...`.
+- Remove generated `apps/desktop/frontend/dist`, then run `go test ./...` again from `apps/desktop` to verify fallback assets.
+- From `apps/desktop`: `wails3 build`.
+- Manual Windows HITL: `wails3 dev`, then validate real microphone labels, input meter movement, output sink behavior/fallback, close-to-tray, tray restore, tray quit, and hidden-window state persistence.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+mainWindow.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+	mainWindow.Close()
+})
+```
+
+Why wrong: it destroys the WebView instead of preserving the page and media state for tray persistence.
+
+#### Correct
+
+```go
+mainWindow.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+	if allowQuit.Load() {
+		return
+	}
+	mainWindow.Hide()
+	event.Cancel()
+})
+```
+
+Why correct: close-to-tray hides the window while preserving the running WebView; explicit quit remains possible through a guarded tray action.
+
+#### Wrong
+
+```typescript
+await audio.setSinkId(deviceId)
+```
+
+Why wrong: `setSinkId` is not guaranteed in WebView2 and can throw even when present.
+
+#### Correct
+
+```typescript
+if (typeof audio.setSinkId !== 'function') {
+  return { supported: false, applied: false }
+}
+await audio.setSinkId(deviceId)
+```
+
+Why correct: output device switching stays capability-based and preserves the documented fallback to the system default output device.
