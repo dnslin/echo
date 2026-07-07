@@ -39,3 +39,36 @@ Implemented Issue #6 workspace bootstrap: Wails Windows desktop scaffold, API he
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Fix PR 28 code review findings
+
+**Date**: 2026-07-07
+**Task**: Fix PR 28 code review findings
+**Branch**: `issue-6-bootstrap-workspace`
+
+### Summary
+
+修复 PR 28 code-review findings：clean checkout 桌面嵌入、OpenAPI /healthz 契约、NSIS 签名路径、中文 UI/安装器文案和无渐变规范，并完成验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf25bc6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
