@@ -1,0 +1,13 @@
+{"file":"AGENTS.md","reason":"Project architecture, product boundaries, desktop/frontend conventions, and manual media acceptance expectations."}
+{"file":"prd.md","reason":"Product requirements for microphone/output devices, input meter, tray persistence, and excluded MVP features."}
+{"file":"design.md","reason":"Technical boundaries for Wails shell, WebView2/LiveKit media ownership, device-control risk, and tray lifecycle."}
+{"file":"implement.md","reason":"Authoritative project implementation sequence and existing Task 3 spike guidance for device/tray validation."}
+{"file":"CONTEXT.md","reason":"Business vocabulary and constraints for system tray, microphone devices, output devices, and local settings."}
+{"file":"docs/ui/client-ui-spec.md","reason":"UI copy, component, accessibility, and explicit exclusions for member volume and tray behavior."}
+{"file":"docs/adr/0005-wails3-desktop-shell.md","reason":"Decision to use Wails 3 shell and avoid Electron fallback."}
+{"file":"docs/adr/0007-webview-livekit-audio-devices.md","reason":"Decision to keep audio capture/playback in WebView2/LiveKit and treat output switching as spike."}
+{"file":"docs/adr/0017-local-settings-in-user-config.md","reason":"Local settings boundary for future device preferences and non-persistence of close-window behavior."}
+{"file":"docs/adr/0029-layered-testing-with-manual-desktop-media-acceptance.md","reason":"Testing strategy requiring automated deterministic tests plus Windows HITL media/tray acceptance."}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"Active desktop/frontend scaffold contracts and validation commands."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Guidance for browser API to UI state to Wails lifecycle boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Guidance to centralize media API wrappers and avoid duplicated raw payload/field handling."}

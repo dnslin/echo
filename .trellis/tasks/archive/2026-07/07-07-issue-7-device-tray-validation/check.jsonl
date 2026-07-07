@@ -1,0 +1,11 @@
+{"file":"AGENTS.md","reason":"Review against project boundaries, manual acceptance expectations, and forbidden scope expansions."}
+{"file":"prd.md","reason":"Check product acceptance for devices, input meter, output fallback, tray persistence, and excluded features."}
+{"file":"design.md","reason":"Check Wails/WebView2/LiveKit ownership boundaries and no Go audio pipeline."}
+{"file":"CONTEXT.md","reason":"Check terminology and product meaning of system tray, microphone device, output device, and local settings."}
+{"file":"docs/ui/client-ui-spec.md","reason":"Check UI labels, accessibility expectations, and no member-volume/output-test-tone leakage."}
+{"file":"docs/adr/0005-wails3-desktop-shell.md","reason":"Check no Electron fallback and Wails shell behavior remains scoped."}
+{"file":"docs/adr/0007-webview-livekit-audio-devices.md","reason":"Check audio remains in WebView2/LiveKit and output unsupported fallback is documented."}
+{"file":"docs/adr/0029-layered-testing-with-manual-desktop-media-acceptance.md","reason":"Check deterministic tests and HITL limitations are reported honestly."}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"Check frontend/Wails scaffold validation commands and build contracts."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check layer-boundary contracts and cleanup/error handling."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check media logic is centralized rather than duplicated in components."}
