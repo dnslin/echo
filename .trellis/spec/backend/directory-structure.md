@@ -4,51 +4,104 @@
 
 ---
 
-## Overview
+## Scenario: API module and root Go workspace bootstrap
 
-<!--
-Document your project's backend directory structure here.
+### 1. Scope / Trigger
 
-Questions to answer:
-- How are modules/packages organized?
-- Where does business logic live?
-- Where are API endpoints defined?
-- How are utilities and helpers organized?
--->
+- Trigger: creating or modifying the echo API service module, root Go workspace, or bootstrap API command.
+- Applies to `services/api/**`, root `go.work`, and root `go.work.sum`.
+- This is a code-spec because Go module/workspace files and API command paths are executable contracts used by build and test commands.
 
-(To be filled by the team)
+### 2. Signatures
 
----
+- Root workspace file:
 
-## Directory Layout
-
-```
-<!-- Replace with your actual structure -->
-src/
-├── ...
-└── ...
+```go
+// go.work
+use (
+	./apps/desktop
+	./services/api
+)
 ```
 
----
+- API module path:
 
-## Module Organization
+```text
+services/api/go.mod module echo/services/api
+```
 
-<!-- How should new features/modules be organized? -->
+- API command entrypoint:
 
-(To be filled by the team)
+```text
+services/api/cmd/api/main.go
+```
 
----
+- Bootstrap HTTP route:
 
-## Naming Conventions
+```http
+GET /healthz -> 200 application/json
+```
 
-<!-- File and folder naming rules -->
+### 3. Contracts
 
-(To be filled by the team)
+- `go.work` must include only deployable Go modules that exist in the repository.
+- `services/api` must be an independent Go module; it must not import `apps/desktop/internal/*`.
+- API code that needs an executable smoke surface should expose a public router/handler constructor instead of starting a network listener in tests.
+- Bootstrap config field names must match the future deployment env keys:
+  - `ECHO_HTTP_ADDR`
+  - `ECHO_DATABASE_PATH`
+  - `ECHO_LIVEKIT_URL`
+  - `ECHO_LIVEKIT_API_KEY`
+  - `ECHO_LIVEKIT_API_SECRET`
+  - `ECHO_ROOM_SESSION_SECRET`
+  - `ECHO_LOG_DIR`
+- If a dependency requires a newer Go version, keep module/workspace `go` directives aligned with the resolved dependency/toolchain and validate with the effective Go toolchain reported by `go env GOVERSION`.
 
----
+### 4. Validation & Error Matrix
 
-## Examples
+| Condition | Required behavior |
+| --- | --- |
+| `go.work` references a missing module | Fix the path before merging; `go work sync` must pass. |
+| API imports desktop internals | Reject the change; modules must remain independently deployable. |
+| Smoke route test starts a real listener | Replace with router-level test through `httptest`. |
+| Dependency requires newer Go than local binary | Document/verify Go auto toolchain behavior; do not silently lower `go` directive below dependency requirements. |
+| Env key appears in docs but not config skeleton | Add the matching config field or remove the premature env key. |
 
-<!-- Link to well-organized modules as examples -->
+### 5. Good/Base/Bad Cases
 
-(To be filled by the team)
+- Good: `go work sync` passes and `go test ./services/api/...` exercises `GET /healthz` through the router.
+- Base: API module has no product endpoints yet, but it has a healthy smoke route and config skeleton.
+- Bad: root workspace points at a non-existent module, or API tests pass only because no tests exist.
+
+### 6. Tests Required
+
+- `go work sync` from repository root.
+- `go test ./services/api/...` from repository root.
+- API smoke test assertion points:
+  - request method/path is `GET /healthz`;
+  - status is `200 OK`;
+  - JSON body includes `status: "ok"`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+func TestAPIStarts(t *testing.T) {
+	go main()
+	// sleeps and calls localhost:8080
+}
+```
+
+Why wrong: it couples tests to a port, process lifecycle, and environment timing.
+
+#### Correct
+
+```go
+router := httpapi.NewRouter()
+request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+response := httptest.NewRecorder()
+router.ServeHTTP(response, request)
+```
+
+Why correct: the test exercises the public HTTP surface without external side effects.
