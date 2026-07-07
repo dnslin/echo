@@ -8,11 +8,11 @@ This directory is the engineering skeleton for later desktop issues. It currentl
 
 - a Wails 3 Go module;
 - a React + TypeScript frontend;
-- a non-product bootstrap screen;
+- a focused non-product device/tray spike screen for Issue #7 risk validation;
 - frontend smoke tests via Vitest;
 - Windows build metadata for the MVP desktop target.
 
-It intentionally does not implement rooms, voice, device selection, push-to-talk, tray lifecycle, or LiveKit integration. Those behaviors are owned by later issues after the required spikes.
+It intentionally does not implement rooms, push-to-talk, formal room voice, or LiveKit integration. The Issue #7 spike is not the formal settings page or room voice implementation.
 
 ## Commands
 

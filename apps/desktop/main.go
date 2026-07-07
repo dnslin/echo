@@ -2,8 +2,10 @@ package main
 
 import (
 	"log"
+	"sync/atomic"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 func main() {
@@ -15,13 +17,38 @@ func main() {
 		},
 	})
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "echo",
 		Width:            1000,
 		Height:           618,
 		BackgroundColour: application.NewRGB(6, 7, 15),
 		URL:              "/",
 	})
+
+	var allowQuit atomic.Bool
+	mainWindow.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		if allowQuit.Load() {
+			return
+		}
+		mainWindow.Hide()
+		event.Cancel()
+	})
+
+	tray := app.SystemTray.New()
+	tray.SetTooltip("echo")
+
+	menu := app.NewMenu()
+	menu.Add("显示主窗口").OnClick(func(_ *application.Context) {
+		mainWindow.Show()
+		mainWindow.Focus()
+	})
+	menu.AddSeparator()
+	menu.Add("退出 echo").OnClick(func(_ *application.Context) {
+		allowQuit.Store(true)
+		app.Quit()
+	})
+
+	tray.AttachWindow(mainWindow).WindowOffset(5).SetMenu(menu)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
