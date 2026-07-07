@@ -90,6 +90,13 @@ describe('mediaDevices wrapper', () => {
     expect(close).toHaveBeenCalled()
   })
 
+  it('throws a clear error when input level detection is unsupported', () => {
+    Object.defineProperty(window, 'AudioContext', { value: undefined, configurable: true })
+    Object.defineProperty(window, 'webkitAudioContext', { value: undefined, configurable: true })
+
+    expect(() => createLevelMeter(fakeStream(), vi.fn())).toThrow('当前 WebView2 不支持输入电平检测。')
+  })
+
   it('reports unsupported output device switching without throwing', async () => {
     const audio = document.createElement('audio')
 

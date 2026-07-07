@@ -205,7 +205,12 @@ applyOutputDevice(audio: HTMLMediaElement, sinkId: string): Promise<OutputDevice
 - WebView2/browser media access belongs in a dedicated wrapper under `frontend/src/spike/**` or a future media module. Components must not scatter raw `navigator.mediaDevices`, `AudioContext`, or `setSinkId` calls.
 - Output device selection is capability-based: use `HTMLMediaElement.setSinkId` only when present; if absent, report the fallback to the system default output device. Do not add Go audio playback to compensate.
 - Switching microphones must stop the old stream before or during replacement so failed switches cannot leave an unintended capture stream active behind new UI state.
-- Spike documentation must separate automated validation from Windows HITL validation.
+- Concurrent microphone requests must be sequenced so a stale `getUserMedia` result cannot replace the currently selected microphone. If a stale request resolves, stop its returned tracks immediately.
+- If creating the Web Audio input-level meter fails after `getUserMedia` succeeds, stop the newly returned stream before reporting failure.
+- Device refresh must reconcile selected device IDs with the new `enumerateDevices()` result; stale selected IDs must fall back to an available device or empty state.
+- Empty string output sink IDs are valid when they come from an enumerated `audiooutput` device; do not treat an enumerated `''` sink ID as “no output device”.
+- If Web Audio level detection is unavailable, report input-level unsupported instead of showing a permanently silent meter as if it were live.
+- Spike documentation must separate automated validation from Windows HITL validation, and PRs must not auto-close the parent issue while required Windows HITL remains pending.
 
 ### 4. Validation & Error Matrix
 
@@ -216,7 +221,11 @@ applyOutputDevice(audio: HTMLMediaElement, sinkId: string): Promise<OutputDevice
 | Tray “退出 echo” clicked | Set quit flag before `app.Quit()` so the close hook does not cancel exit. |
 | `navigator.mediaDevices` missing | Show a clear unsupported message; tests mock this branch. |
 | `getUserMedia` rejects | Show `无法使用麦克风，请检查系统权限`; do not crash or leave stale level state. |
+| Older `getUserMedia` resolves after a newer request | Stop the stale stream and keep UI/state bound to the latest request. |
+| Web Audio meter creation fails after `getUserMedia` succeeds | Stop the newly granted stream and report the failure. |
+| Device refresh drops the selected device | Select an available replacement or the empty state before the next request/apply action. |
 | `setSinkId` missing | Report `当前 WebView2 不支持指定输出设备，已跟随系统默认输出设备。` and document fallback. |
+| Enumerated output device has `deviceId === ''` | Treat it as a valid default sink and pass `''` to `setSinkId`. |
 | Only one output device exists | Provide an explicit “验证输出设备切换” action; do not rely only on select change events. |
 | `frontend/dist` is absent | `go test ./...` in `apps/desktop` must still compile through fallback embedded assets. |
 
@@ -233,7 +242,11 @@ applyOutputDevice(audio: HTMLMediaElement, sinkId: string): Promise<OutputDevice
   - Assert empty device lists and permission failure UI.
   - Assert input-level math clamps to 0-100.
   - Assert Web Audio cleanup disconnects nodes and closes context.
-  - Assert output-device unsupported, supported success, and supported failure paths.
+  - Assert Web Audio unsupported reporting does not masquerade as a live zero-level meter.
+  - Assert stale microphone requests cannot replace the latest selected stream and that stale streams are stopped.
+  - Assert meter-creation failure stops the newly granted stream.
+  - Assert refresh replaces stale selected device IDs with currently enumerated devices.
+  - Assert output-device unsupported, supported success, supported failure, and enumerated empty-sink default paths.
   - Assert the page can explicitly apply the selected output device when only one output exists.
 - From `apps/desktop/frontend`: `npm run build`.
 - From `apps/desktop`: `go test ./...`.

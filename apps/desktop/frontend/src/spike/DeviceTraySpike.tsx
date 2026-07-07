@@ -32,6 +32,7 @@ export function DeviceTraySpike() {
 
   const streamRef = useRef<MediaStream | null>(null)
   const cleanupLevelMeterRef = useRef<() => void>(() => undefined)
+  const microphoneRequestIDRef = useRef(0)
   const outputAudioRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => {
@@ -49,6 +50,7 @@ export function DeviceTraySpike() {
 
   useEffect(() => {
     return () => {
+      microphoneRequestIDRef.current += 1
       stopCurrentMicrophone()
     }
   }, [])
@@ -66,8 +68,8 @@ export function DeviceTraySpike() {
       const devices = await listMediaDevices()
       setMicrophones(devices.microphones)
       setOutputs(devices.outputs)
-      setSelectedMicrophoneID((current) => current || devices.microphones[0]?.deviceId || '')
-      setSelectedOutputID((current) => current || devices.outputs[0]?.deviceId || '')
+      setSelectedMicrophoneID((current) => selectAvailableDeviceID(current, devices.microphones))
+      setSelectedOutputID((current) => selectAvailableDeviceID(current, devices.outputs))
 
       const microphoneText = devices.microphones.length > 0 ? '' : '未检测到可用麦克风'
       const outputText = devices.outputs.length > 0 ? '' : '未检测到输出设备，将跟随系统默认输出设备。'
@@ -78,27 +80,42 @@ export function DeviceTraySpike() {
   }
 
   async function requestPermissionAndStartMicrophone() {
+    stopCurrentMicrophone()
     await startMicrophone(selectedMicrophoneID || undefined)
     await refreshDevices()
   }
 
   async function startMicrophone(deviceId?: string) {
+    const requestID = microphoneRequestIDRef.current + 1
+    microphoneRequestIDRef.current = requestID
     setPermissionStatus('requesting')
     setMicrophoneMessage('正在请求麦克风权限...')
     try {
       const stream = await requestMicrophone(deviceId)
+      if (!isCurrentMicrophoneRequest(requestID)) {
+        stopMediaStream(stream)
+        return
+      }
+
       stopCurrentMicrophone()
-      streamRef.current = stream
-      cleanupLevelMeterRef.current = createLevelMeter(stream, setInputLevel)
-      setPermissionStatus('granted')
-      setMicrophoneMessage(deviceId ? '麦克风已切换，输入电平正在更新。' : '麦克风已授权，输入电平正在更新。')
-    } catch (error) {
-      if (!streamRef.current) {
+      try {
+        const cleanupLevelMeter = createLevelMeter(stream, setInputLevel)
+        streamRef.current = stream
+        cleanupLevelMeterRef.current = cleanupLevelMeter
+        setPermissionStatus('granted')
+        setMicrophoneMessage(deviceId ? '麦克风已切换，输入电平正在更新。' : '麦克风已授权，输入电平正在更新。')
+      } catch (error) {
+        stopMediaStream(stream)
+        if (!isCurrentMicrophoneRequest(requestID)) return
         setPermissionStatus('failed')
         setInputLevel(0)
-      } else {
-        setPermissionStatus('granted')
+        setMicrophoneMessage(`无法使用麦克风，请检查系统权限。${formatOptionalError(error)}`)
       }
+    } catch (error) {
+      if (!isCurrentMicrophoneRequest(requestID)) return
+      stopCurrentMicrophone()
+      setPermissionStatus('failed')
+      setInputLevel(0)
       setMicrophoneMessage(`无法使用麦克风，请检查系统权限。${formatOptionalError(error)}`)
     }
   }
@@ -122,7 +139,7 @@ export function DeviceTraySpike() {
       setOutputMessage('输出设备验证元素未就绪。')
       return
     }
-    if (!sinkId) {
+    if (!outputs.some((device) => device.deviceId === sinkId)) {
       setOutputMessage('未检测到输出设备，将跟随系统默认输出设备。')
       return
     }
@@ -134,9 +151,15 @@ export function DeviceTraySpike() {
   function stopCurrentMicrophone() {
     cleanupLevelMeterRef.current()
     cleanupLevelMeterRef.current = () => undefined
-    streamRef.current?.getTracks().forEach((track) => track.stop())
+    if (streamRef.current) {
+      stopMediaStream(streamRef.current)
+    }
     streamRef.current = null
     setInputLevel(0)
+  }
+
+  function isCurrentMicrophoneRequest(requestID: number) {
+    return microphoneRequestIDRef.current === requestID
   }
 
   const levelBars = Array.from({ length: 20 }, (_, index) => index < Math.round(inputLevel / 5))
@@ -242,6 +265,15 @@ export function DeviceTraySpike() {
       <p aria-live="polite" style={styles.footerStatus}>{deviceMessage}</p>
     </main>
   )
+}
+
+function selectAvailableDeviceID(current: string, devices: EchoAudioDevice[]) {
+  if (devices.some((device) => device.deviceId === current)) return current
+  return devices[0]?.deviceId ?? ''
+}
+
+function stopMediaStream(stream: MediaStream) {
+  stream.getTracks().forEach((track) => track.stop())
 }
 
 function formatOptionalError(error: unknown): string {

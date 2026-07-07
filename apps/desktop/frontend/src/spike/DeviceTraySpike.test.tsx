@@ -37,6 +37,7 @@ describe('DeviceTraySpike', () => {
   })
 
   it('stops the old stream when switching microphones successfully', async () => {
+    mockAudioContext()
     const firstTrackStop = vi.fn()
     const secondTrackStop = vi.fn()
     const getUserMedia = vi
@@ -98,6 +99,123 @@ describe('DeviceTraySpike', () => {
       }
     }
   })
+
+  it('ignores stale microphone requests that resolve after a newer selection', async () => {
+    mockAudioContext()
+    const first = deferred<MediaStream>()
+    const second = deferred<MediaStream>()
+    const firstTrackStop = vi.fn()
+    const secondTrackStop = vi.fn()
+    const getUserMedia = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+
+    setMediaDevices({
+      enumerateDevices: vi.fn().mockResolvedValue([
+        fakeDevice('audioinput', 'mic_1', 'Desk Mic'),
+        fakeDevice('audioinput', 'mic_2', 'Headset Mic'),
+      ]),
+      getUserMedia,
+    })
+
+    render(<DeviceTraySpike />)
+
+    await screen.findByText('Headset Mic')
+    fireEvent.click(screen.getByRole('button', { name: '请求麦克风权限' }))
+    fireEvent.change(screen.getByLabelText('麦克风设备'), { target: { value: 'mic_2' } })
+
+    second.resolve(fakeStream(secondTrackStop))
+    await screen.findByText('麦克风已切换，输入电平正在更新。')
+
+    first.resolve(fakeStream(firstTrackStop))
+    await waitFor(() => expect(firstTrackStop).toHaveBeenCalled())
+    expect(secondTrackStop).not.toHaveBeenCalled()
+    expect((screen.getByLabelText('麦克风设备') as HTMLSelectElement).value).toBe('mic_2')
+  })
+
+  it('stops a newly granted stream when the input level meter cannot be created', async () => {
+    const trackStop = vi.fn()
+    setMediaDevices({
+      enumerateDevices: vi.fn().mockResolvedValue([fakeDevice('audioinput', 'mic_1', 'Desk Mic')]),
+      getUserMedia: vi.fn().mockResolvedValue(fakeStream(trackStop)),
+    })
+    Object.defineProperty(window, 'AudioContext', { value: undefined, configurable: true })
+    Object.defineProperty(window, 'webkitAudioContext', { value: undefined, configurable: true })
+
+    render(<DeviceTraySpike />)
+
+    await screen.findByText('Desk Mic')
+    fireEvent.click(screen.getByRole('button', { name: '请求麦克风权限' }))
+
+    expect(await screen.findByText(/当前 WebView2 不支持输入电平检测/)).toBeVisible()
+    expect(screen.getByText('授权失败')).toBeVisible()
+    expect(trackStop).toHaveBeenCalled()
+  })
+
+  it('moves selected devices back to available devices after refresh', async () => {
+    const enumerateDevices = vi
+      .fn()
+      .mockResolvedValueOnce([
+        fakeDevice('audioinput', 'mic_1', 'Desk Mic'),
+        fakeDevice('audioinput', 'mic_2', 'Headset Mic'),
+        fakeDevice('audiooutput', 'speaker_1', 'Speakers'),
+        fakeDevice('audiooutput', 'speaker_2', 'Headset'),
+      ])
+      .mockResolvedValueOnce([
+        fakeDevice('audioinput', 'mic_1', 'Desk Mic'),
+        fakeDevice('audiooutput', 'speaker_1', 'Speakers'),
+      ])
+
+    setMediaDevices({
+      enumerateDevices,
+      getUserMedia: vi.fn(() => new Promise<MediaStream>(() => undefined)),
+    })
+
+    render(<DeviceTraySpike />)
+
+    await screen.findByText('Headset Mic')
+    const microphoneSelect = document.querySelector('#microphone-device') as HTMLSelectElement
+    const outputSelect = document.querySelector('#output-device') as HTMLSelectElement
+    fireEvent.change(microphoneSelect, { target: { value: 'mic_2' } })
+    fireEvent.change(outputSelect, { target: { value: 'speaker_2' } })
+    fireEvent.click(screen.getByRole('button', { name: '刷新设备' }))
+
+    await waitFor(() => expect(microphoneSelect.value).toBe('mic_1'))
+    expect(outputSelect.value).toBe('speaker_1')
+  })
+
+  it('allows an empty sink id when it represents an enumerated default output device', async () => {
+    const setSinkId = vi.fn().mockResolvedValue(undefined)
+    const originalSetSinkId = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'setSinkId')
+    Object.defineProperty(HTMLMediaElement.prototype, 'setSinkId', {
+      value: setSinkId,
+      configurable: true,
+    })
+
+    try {
+      setMediaDevices({
+        enumerateDevices: vi.fn().mockResolvedValue([
+          fakeDevice('audiooutput', '', 'Default Output'),
+        ]),
+        getUserMedia: vi.fn(),
+      })
+
+      render(<DeviceTraySpike />)
+
+      await screen.findByText('Default Output')
+      fireEvent.click(screen.getByRole('button', { name: '验证输出设备切换' }))
+
+      await waitFor(() => expect(setSinkId).toHaveBeenCalledWith(''))
+      expect(await screen.findByText('输出设备切换验证成功。')).toBeVisible()
+    } finally {
+      if (originalSetSinkId) {
+        Object.defineProperty(HTMLMediaElement.prototype, 'setSinkId', originalSetSinkId)
+      } else {
+        delete (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId
+      }
+    }
+  })
 })
 
 function setMediaDevices(mediaDevices: Partial<MediaDevices>) {
@@ -121,4 +239,34 @@ function fakeStream(stop: () => void): MediaStream {
   return {
     getTracks: () => [{ stop }],
   } as unknown as MediaStream
+}
+
+function mockAudioContext() {
+  const source = { connect: vi.fn(), disconnect: vi.fn() } as unknown as MediaStreamAudioSourceNode
+  const analyser = {
+    fftSize: 0,
+    disconnect: vi.fn(),
+    getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0.25),
+  } as unknown as AnalyserNode
+
+  class MockAudioContext {
+    createMediaStreamSource = vi.fn(() => source)
+    createAnalyser = vi.fn(() => analyser)
+    close = vi.fn().mockResolvedValue(undefined)
+  }
+
+  Object.defineProperty(window, 'AudioContext', { value: MockAudioContext, configurable: true })
+  Object.defineProperty(window, 'requestAnimationFrame', { value: vi.fn().mockReturnValue(7), configurable: true })
+  Object.defineProperty(window, 'cancelAnimationFrame', { value: vi.fn(), configurable: true })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+
+  return { promise, resolve, reject }
 }

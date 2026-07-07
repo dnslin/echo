@@ -17,6 +17,13 @@ export type OutputDeviceResult = {
   message: string
 }
 
+export class LevelMeterUnsupportedError extends Error {
+  constructor() {
+    super('当前 WebView2 不支持输入电平检测。')
+    this.name = 'LevelMeterUnsupportedError'
+  }
+}
+
 type SinkSelectableElement = HTMLMediaElement & {
   setSinkId?: (sinkId: string) => Promise<void>
 }
@@ -64,8 +71,7 @@ export function createLevelMeter(stream: MediaStream, onLevel: (level: number) =
   const AudioContextConstructor = win?.AudioContext ?? win?.webkitAudioContext
 
   if (!win || !AudioContextConstructor) {
-    onLevel(0)
-    return () => undefined
+    throw new LevelMeterUnsupportedError()
   }
 
   const audioContext = new AudioContextConstructor()

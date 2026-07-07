@@ -6,9 +6,10 @@ Result: pending HITL
 
 Automated validation completed:
 
-- Frontend media wrapper tests cover audio device enumeration, empty device lists, microphone request constraints, input level calculation bounds, Web Audio cleanup, and output `setSinkId` supported/unsupported paths.
-- Component tests cover empty device states, permission failure handling, microphone switching cleanup, and applying the selected output device from the page.
+- Frontend media wrapper tests cover audio device enumeration, empty device lists, microphone request constraints, input level calculation bounds, Web Audio cleanup, input-level unsupported reporting, and output `setSinkId` supported/unsupported paths.
+- Component tests cover empty device states, permission failure handling, microphone switching cleanup, stale microphone request suppression, meter-creation failure cleanup, stale device selection refresh, empty default output sink IDs, and applying the selected output device from the page.
 - Desktop Go entrypoint wires Wails system tray and cancels ordinary window close by hiding the main window.
+- PR #29 references Issue #7 but must not auto-close it until Windows HITL validation is complete.
 
 Manual Windows validation pending:
 
@@ -50,7 +51,7 @@ Manual tray behavior is pending HITL verification.
 
 Automated results from this implementation pass:
 
-- `npm run test:run` in `apps/desktop/frontend`: pass.
+- `npm run test:run` in `apps/desktop/frontend`: pass, including code-review regression coverage for async microphone requests, meter cleanup, stale device refresh, empty sink IDs, and input-level unsupported reporting.
 - `npm run build` in `apps/desktop/frontend`: pass.
 - `go test ./...` in `apps/desktop`: pass, including after removing generated `frontend/dist` to verify fallback assets.
 - `wails3 build` in `apps/desktop`: pass; produced `apps/desktop/bin/echo.exe`.
