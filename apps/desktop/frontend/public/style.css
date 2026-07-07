@@ -21,7 +21,7 @@ body {
 body {
   display: grid;
   place-items: center;
-  background: radial-gradient(circle at top left, rgba(14, 165, 233, 0.18), transparent 32%), #020617;
+  background: #020617;
 }
 
 #root {

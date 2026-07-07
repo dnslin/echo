@@ -1,4 +1,4 @@
-# Wails project configuration for the echo desktop bootstrap.
+# Wails project configuration for the echo desktop scaffold.
 version: '3'
 
 info:

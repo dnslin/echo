@@ -8,10 +8,10 @@ function App() {
       </section>
 
       <h1 id="app-title" className="title">
-        echo desktop bootstrap
+        echo 桌面端已就绪
       </h1>
       <p className="subtitle">
-        Engineering skeleton ready for future MVP work.
+        工程骨架已准备好，后续 MVP 功能将在独立任务中接入。
       </p>
     </main>
   )

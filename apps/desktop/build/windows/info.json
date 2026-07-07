@@ -6,7 +6,7 @@
     "0000": {
       "ProductVersion": "0.1.0",
       "CompanyName": "echo",
-      "FileDescription": "echo desktop bootstrap",
+      "FileDescription": "echo desktop scaffold",
       "LegalCopyright": "© 2026, echo",
       "ProductName": "echo",
       "Comments": "MVP friend test desktop bootstrap"

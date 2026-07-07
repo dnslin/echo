@@ -7,7 +7,7 @@ describe('App bootstrap smoke', () => {
   it('renders visible echo bootstrap content', () => {
     render(<App />)
 
-    expect(screen.getByRole('heading', { name: /echo desktop bootstrap/i })).toBeVisible()
-    expect(screen.getByText(/engineering skeleton ready/i)).toBeVisible()
+    expect(screen.getByRole('heading', { name: /echo 桌面端已就绪/i })).toBeVisible()
+    expect(screen.getByText(/工程骨架已准备好/i)).toBeVisible()
   })
 })
