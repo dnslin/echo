@@ -72,3 +72,38 @@ Implemented Issue #6 workspace bootstrap: Wails Windows desktop scaffold, API he
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Issue 7 设备托盘 spike
+
+**Date**: 2026-07-07
+**Task**: Issue 7 设备托盘 spike
+**Branch**: `issue-7-device-tray-validation`
+
+### Summary
+
+完成 Issue #7 设备和托盘风险验证：规划 Trellis 任务，实现 WebView2 音频设备 spike 与 Wails close-to-tray 托盘生命周期，补充自动化测试和前端 code-spec，并通过 frontend test/build、Go test、fallback asset test、wails3 build 与 trellis-check。HITL Windows 设备/托盘验证仍记录为 pending。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f9b2c75` | (see git log) |
+| `84aabef` | (see git log) |
+| `30143d8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
