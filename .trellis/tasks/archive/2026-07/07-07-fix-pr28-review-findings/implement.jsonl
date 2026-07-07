@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"Defines Wails desktop scaffold contracts, required frontend scripts, Windows metadata, and validation commands relevant to fixing desktop findings."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Defines API module, root workspace, config skeleton, /healthz smoke route, and backend validation contracts."}
+{"file":"docs/adr/0032-openapi-http-websocket-contract-docs.md","reason":"Records the decision that HTTP APIs, including health checks, belong in the OpenAPI contract while WebSocket messages are documented separately."}
+{"file":"docs/ui/client-ui-spec.md","reason":"Defines current client UI copy and no-gradient visual rules used by convention findings."}
