@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MsixPackagingToolTemplate
+    xmlns="http://schemas.microsoft.com/msix/packaging/msixpackagingtool/template/2022">
+    <Settings
+        AllowTelemetry="false"
+        ApplyACLsToPackageFiles="true"
+        GenerateCommandLineFile="true"
+        AllowPromptForPassword="false">
+    </Settings>
+    <Installer
+        Path="echo.exe"
+        Arguments=""
+        InstallLocation="C:\Program Files\echo\echo">
+    </Installer>
+    <PackageInformation
+        PackageName="echo"
+        PackageDisplayName="echo"
+        PublisherName="CN=echo"
+        PublisherDisplayName="echo"
+        Version="0.1.0.0"
+        PackageDescription="Lightweight game voice desktop app bootstrap">
+        <Capabilities>
+            <Capability Name="runFullTrust" />
+        </Capabilities>
+        <Applications>
+            <Application
+                Id="app.echo.desktop"
+                Description="Lightweight game voice desktop app bootstrap"
+                DisplayName="echo"
+                ExecutableName="echo.exe"
+                EntryPoint="Windows.FullTrustApplication">
+            </Application>
+        </Applications>
+        <Resources>
+            <Resource Language="zh-CN" />
+        </Resources>
+        <Dependencies>
+            <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+        </Dependencies>
+        <Properties>
+            <Framework>false</Framework>
+            <DisplayName>echo</DisplayName>
+            <PublisherDisplayName>echo</PublisherDisplayName>
+            <Description>Lightweight game voice desktop app bootstrap</Description>
+            <Logo>Assets\AppIcon.png</Logo>
+        </Properties>
+    </PackageInformation>
+    <SaveLocation PackagePath="echo.msix" />
+    <PackageIntegrity>
+        <CertificatePath></CertificatePath>
+    </PackageIntegrity>
+</MsixPackagingToolTemplate>
