@@ -327,8 +327,11 @@ git reset --hard HEAD~1
 
 **Files:**
 - Modify: `apps/desktop/frontend/package.json`
+- Modify: `apps/desktop/frontend/package-lock.json`
 - Create: `apps/desktop/frontend/src/spike/LiveKitAudioSpike.tsx`
-- Modify: `apps/desktop/frontend/src/app/App.tsx`
+- Create: `apps/desktop/frontend/src/spike/LiveKitAudioSpike.test.tsx`
+- Modify: `apps/desktop/frontend/src/App.tsx`
+- Modify: `apps/desktop/frontend/src/App.test.tsx`
 - Create: `docs/spikes/wails-livekit-audio.md`
 
 - [ ] **Step 1: Install LiveKit JS dependencies**
@@ -337,79 +340,37 @@ Run:
 
 ```powershell
 cd apps\desktop\frontend
-npm install livekit-client @livekit/components-react
+npm install livekit-client
 cd ..\..\..
 ```
 
 Expected:
 
 ```text
-apps/desktop/frontend/package.json includes livekit-client and @livekit/components-react
+apps/desktop/frontend/package.json includes livekit-client
 ```
 
 - [ ] **Step 2: Add spike component**
 
-Create `apps/desktop/frontend/src/spike/LiveKitAudioSpike.tsx`:
+Create `apps/desktop/frontend/src/spike/LiveKitAudioSpike.tsx` with these constraints:
 
-```tsx
-import { useState } from 'react';
-import { Room, RoomEvent, Track } from 'livekit-client';
-
-type ConnectionState = 'idle' | 'connecting' | 'connected' | 'failed';
-
-export function LiveKitAudioSpike() {
-  const [url, setUrl] = useState('wss://livekit.example.com');
-  const [token, setToken] = useState('');
-  const [state, setState] = useState<ConnectionState>('idle');
-  const [error, setError] = useState('');
-
-  async function connect() {
-    setState('connecting');
-    setError('');
-    const room = new Room({ adaptiveStream: false, dynacast: false });
-    room.on(RoomEvent.TrackSubscribed, (track) => {
-      if (track.kind === Track.Kind.Audio) {
-        const element = track.attach();
-        element.autoplay = true;
-        document.body.appendChild(element);
-      }
-    });
-    try {
-      await room.connect(url, token);
-      await room.localParticipant.setMicrophoneEnabled(true);
-      setState('connected');
-      (window as unknown as { echoLiveKitSpikeRoom?: Room }).echoLiveKitSpikeRoom = room;
-    } catch (err) {
-      setState('failed');
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  return (
-    <main className="p-6 space-y-4">
-      <h1 className="text-xl font-semibold">LiveKit Audio Spike</h1>
-      <label className="block">
-        <span>LiveKit URL</span>
-        <input className="block w-full border px-2 py-1" value={url} onChange={(event) => setUrl(event.target.value)} />
-      </label>
-      <label className="block">
-        <span>Token</span>
-        <textarea className="block w-full border px-2 py-1" value={token} onChange={(event) => setToken(event.target.value)} />
-      </label>
-      <button className="rounded bg-blue-600 px-3 py-2 text-white" onClick={connect}>Connect and publish microphone</button>
-      <p data-testid="state">State: {state}</p>
-      {error && <pre className="text-red-600">{error}</pre>}
-    </main>
-  );
-}
+```text
+- Import `Room`, `RoomEvent`, and `Track` from `livekit-client` only.
+- Keep LiveKit URL and short-lived join token in React session state only.
+- Support `idle`, `connecting`, `connected`, `failed`, and `disconnected` states.
+- Connect with `room.connect(url, token, { autoSubscribe: true })`, then call `room.localParticipant.setMicrophoneEnabled(true)` after user action.
+- Register connection, reconnection, track subscribed/unsubscribed, media-device error, and audio-playback status handlers before connecting.
+- Attach only remote audio tracks to a dedicated container via `track.attach()`; do not append spike audio to `document.body`.
+- Provide disconnect cleanup that calls `room.disconnect(true)`, detaches tracks, removes audio elements, and releases microphone capture.
+- Redact the active token from visible error text and never write token, API key, API secret, room session secret, or audio content to docs, logs, globals, or persistent storage.
 ```
 
 - [ ] **Step 3: Temporarily route app to spike**
 
-Modify `apps/desktop/frontend/src/app/App.tsx` to render the spike component while Task 2 runs:
+Modify `apps/desktop/frontend/src/App.tsx` to render the spike component while Task 2 runs:
 
 ```tsx
-import { LiveKitAudioSpike } from '../spike/LiveKitAudioSpike';
+import { LiveKitAudioSpike } from './spike/LiveKitAudioSpike';
 
 export default function App() {
   return <LiveKitAudioSpike />;
@@ -430,10 +391,14 @@ Manual expected result:
 ```text
 Wails window opens
 Spike page renders
-A valid LiveKit URL and token can connect
+A valid LiveKit Cloud WSS URL and short-lived token can connect
 Microphone permission prompt appears if needed
 Local participant publishes microphone audio
-A second client in the same LiveKit room can hear the desktop client
+At least two clients join the same LiveKit Cloud test room
+A second client can hear the Wails desktop client
+The Wails desktop client can hear the second client
+Disconnect cleans up the LiveKit room and microphone capture
+No token or secret is written to committed files or console output
 ```
 
 - [ ] **Step 5: Record spike result**
@@ -441,22 +406,22 @@ A second client in the same LiveKit room can hear the desktop client
 Create `docs/spikes/wails-livekit-audio.md`:
 
 ```markdown
-# Wails 3 + WebView2 + LiveKit Audio Spike
+# Wails 3 + WebView2 + LiveKit 音频路径 Spike
 
-Result: pass
+Result: pass (automated + Windows HITL)
 
-Validated on Windows x64:
+Validated on Windows 10/11 x64 with Wails 3 WebView2 and LiveKit Cloud public WSS:
 
-- Wails 3 app launched with WebView2.
-- LiveKit JS connected to the configured LiveKit room.
-- Local microphone track published.
-- Remote audio track subscribed and played.
-- App logs captured connection failures without exposing token plaintext.
+- LiveKit JS connected after a user action.
+- Local microphone track published from WebView2.
+- A second LiveKit client joined the same LiveKit Cloud test room.
+- Bidirectional audio was heard between the Wails client and the second client.
+- Remote audio played through WebView2 browser audio elements, not a Go audio pipeline.
+- The record contains no LiveKit URL, token, API key, API secret, room session secret, reusable credential, or audio content.
 
-Follow-up constraints:
+Limitations:
 
-- Keep audio capture/playback in WebView2 + LiveKit JS.
-- Do not add a Go audio capture/playback pipeline.
+- This does not validate self-hosted LiveKit, external Nginx, TURN, formal temporary rooms, invite codes, business WebSocket, member lists, or product token issuance.
 ```
 
 If the spike fails, set `Result: fail`, include the failing condition and stop implementation before Task 5.

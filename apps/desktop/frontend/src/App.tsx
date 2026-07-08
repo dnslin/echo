@@ -1,7 +1,7 @@
-import { DeviceTraySpike } from './spike/DeviceTraySpike'
+import { LiveKitAudioSpike } from './spike/LiveKitAudioSpike'
 
 function App() {
-  return <DeviceTraySpike />
+  return <LiveKitAudioSpike />
 }
 
 export default App
