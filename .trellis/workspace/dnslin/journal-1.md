@@ -151,23 +151,32 @@ Implemented Issue #6 workspace bootstrap: Wails Windows desktop scaffold, API he
 
 ### Summary
 
-验证 Wails 3 WebView2 内 LiveKit JS 音频路径：实现隔离 spike、补充自动测试和安全约束、记录 LiveKit Cloud Windows HITL 通过，并同步 frontend code-spec。
+Validated the Wails 3 WebView2 LiveKit JS audio path, added automated spike coverage and frontend code-spec contracts, recorded the LiveKit Cloud Windows HITL pass, and archived the Trellis task.
 
 ### Main Changes
 
-(Add details)
+- Implemented an isolated LiveKit audio spike page for connecting to a public LiveKit WSS room, publishing the microphone after user action, attaching remote audio tracks inside the page container, and cleaning up on disconnect.
+- Added frontend tests for connect/publish behavior, active-token redaction, remote audio attach/detach cleanup, and the public App route.
+- Recorded Windows HITL evidence for LiveKit Cloud plus a second client confirming bidirectional audio without storing secrets.
+- Updated the frontend code-spec with LiveKit dependency, token handling, remote audio attachment, cleanup, and HITL boundary contracts.
+- Archived the Trellis task and recorded the session journal.
 
 ### Git Commits
 
 | Hash | Message |
 |------|---------|
-| `a884da3` | (see git log) |
-| `c47b221` | (see git log) |
-| `276269d` | (see git log) |
+| `a884da3` | LiveKit audio spike implementation |
+| `c47b221` | Frontend code-spec update for the LiveKit audio spike |
+| `276269d` | Issue 8 Trellis task artifacts |
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `npm --prefix apps/desktop/frontend run test:run` passed with 4 test files and 21 tests.
+- [OK] `npm --prefix apps/desktop/frontend run build` passed; the LiveKit chunk-size warning was documented as non-blocking for this spike.
+- [OK] `go -C apps/desktop test ./...` passed.
+- [OK] `cd apps/desktop && wails3 build` passed and produced `apps/desktop/bin/echo.exe`.
+- [OK] `trellis-check` passed.
+- [OK] Windows HITL passed with LiveKit Cloud public WSS and a second client confirming bidirectional audio; no secrets were recorded.
 
 ### Status
 
