@@ -356,3 +356,36 @@ Fixed PR #33 review findings by making join-room persistence atomic, clearing re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Implement issue 12 leave room lifecycle
+
+**Date**: 2026-07-08
+**Task**: Implement issue 12 leave room lifecycle
+**Branch**: `issue-12-leave-room-lifecycle`
+
+### Summary
+
+Implemented backend leave-room lifecycle for Issue #12: leave endpoint, disconnected member state, empty-room retention and expiry cleanup, OpenAPI updates, backend specs, and passing verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ba5a322` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
