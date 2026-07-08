@@ -1,12 +1,12 @@
 # Backend Development Guidelines
 
-> Best practices for backend development in this project.
+> Code-specs for backend development in this project.
 
 ---
 
 ## Overview
 
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
+This directory contains executable backend contracts for the echo API service. Follow the relevant scenario before editing backend code.
 
 ---
 
@@ -15,23 +15,33 @@ This directory contains guidelines for backend development. Fill in each file wi
 | Guide | Description | Status |
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | Active: API module/workspace bootstrap |
-| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
-| [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
+| [Database Guidelines](./database-guidelines.md) | GORM/SQLite persistence contracts and create-room storage rules | Active: API SQLite persistence |
+| [Error Handling](./error-handling.md) | HTTP validation error envelope and create-room error mapping | Active: create-room HTTP validation |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 
 ---
 
-## How to Fill These Guidelines
+## Pre-Development Checklist
 
-For each guideline file:
+When working under `services/api/**`:
 
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
+1. Read [Directory Structure](./directory-structure.md) before changing module layout, router construction, config fields, or workspace files.
+2. Read [Database Guidelines](./database-guidelines.md) before adding or changing persistence code, GORM models, SQLite migrations, or repository methods.
+3. Read [Error Handling](./error-handling.md) before adding or changing HTTP handlers, validation behavior, error codes, or OpenAPI error examples.
+4. Read [Quality Guidelines](./quality-guidelines.md) if a task creates new backend patterns not already covered by a scenario.
+5. Read [Logging Guidelines](./logging-guidelines.md) before adding backend logs.
 
-The goal is to help AI assistants and new team members understand how YOUR project works.
+## Quality Check
+
+For backend changes, verify the relevant scenarios and run:
+
+```bash
+go test -count=1 ./services/api/...
+git diff --check
+```
+
+If the change touches OpenAPI, compare `services/api/openapi.yaml` against handler request/response structs and tests.
 
 ---
 

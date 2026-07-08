@@ -25,3 +25,261 @@ paths:
                 healthy:
                   value:
                     status: ok
+  /v1/rooms:
+    post:
+      summary: 创建临时房间
+      operationId: createRoom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoomRequest"
+            examples:
+              valid:
+                value:
+                  anonymous_id: anon_local_123
+                  nickname: Alice
+                  avatar_id: avatar_07
+                  room_name: 今晚开黑
+      responses:
+        "201":
+          description: 临时房间创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateRoomResponse"
+              examples:
+                created:
+                  value:
+                    room:
+                      id: room_abc
+                      name: 今晚开黑
+                      invite_code: K7M9Q2
+                      state: active
+                      created_at: "2026-07-08T12:00:00Z"
+                      last_empty_at: null
+                      expires_at: null
+                    member:
+                      id: mem_abc
+                      room_id: room_abc
+                      anonymous_id: anon_local_123
+                      nickname: Alice
+                      avatar_id: avatar_07
+                      is_host: true
+                      state: online
+                      muted: false
+                      speaking: false
+                      voice_mode: push_to_talk
+                      livekit_identity: mem_abc
+                      joined_at: "2026-07-08T12:00:00Z"
+        "400":
+          description: 请求校验失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidRequest:
+                  value:
+                    error:
+                      code: invalid_request
+                      message: 请求格式无效
+                invalidAnonymousId:
+                  value:
+                    error:
+                      code: invalid_anonymous_id
+                      message: 匿名身份不能为空
+                anonymousIdTooLong:
+                  value:
+                    error:
+                      code: anonymous_id_too_long
+                      message: 匿名身份最多 128 个字符
+                invalidAvatarId:
+                  value:
+                    error:
+                      code: invalid_avatar_id
+                      message: 请选择头像
+                avatarIdTooLong:
+                  value:
+                    error:
+                      code: avatar_id_too_long
+                      message: 头像标识最多 64 个字符
+                invalidNickname:
+                  value:
+                    error:
+                      code: invalid_nickname
+                      message: 请输入昵称
+                nicknameTooLong:
+                  value:
+                    error:
+                      code: nickname_too_long
+                      message: 昵称最多 16 个字符
+                roomNameTooLong:
+                  value:
+                    error:
+                      code: room_name_too_long
+                      message: 房间名称最多 24 个字符
+        "500":
+          description: 服务端错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                internalError:
+                  value:
+                    error:
+                      code: internal_error
+                      message: 服务器错误
+components:
+  schemas:
+    CreateRoomRequest:
+      type: object
+      required:
+        - anonymous_id
+        - nickname
+        - avatar_id
+      properties:
+        anonymous_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 本机匿名身份，非账号；服务端会裁剪前后空白。
+        nickname:
+          type: string
+          minLength: 1
+          maxLength: 16
+          description: 成员展示昵称；服务端会裁剪前后空白。
+        avatar_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 随机头像标识；服务端会裁剪前后空白。
+        room_name:
+          type: string
+          maxLength: 24
+          description: 可选临时房间名；为空时服务端使用短默认名称。
+    CreateRoomResponse:
+      type: object
+      required:
+        - room
+        - member
+      properties:
+        room:
+          $ref: "#/components/schemas/Room"
+        member:
+          $ref: "#/components/schemas/Member"
+    Room:
+      type: object
+      required:
+        - id
+        - name
+        - invite_code
+        - state
+        - created_at
+        - last_empty_at
+        - expires_at
+      properties:
+        id:
+          type: string
+          examples:
+            - room_abc
+        name:
+          type: string
+          maxLength: 24
+        invite_code:
+          type: string
+          pattern: "^[A-Z0-9]{6}$"
+        state:
+          type: string
+          enum:
+            - active
+            - expired
+        created_at:
+          type: string
+          format: date-time
+        last_empty_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        expires_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    Member:
+      type: object
+      required:
+        - id
+        - room_id
+        - anonymous_id
+        - nickname
+        - avatar_id
+        - is_host
+        - state
+        - muted
+        - speaking
+        - voice_mode
+        - livekit_identity
+        - joined_at
+      properties:
+        id:
+          type: string
+          examples:
+            - mem_abc
+        room_id:
+          type: string
+        anonymous_id:
+          type: string
+        nickname:
+          type: string
+          maxLength: 16
+        avatar_id:
+          type: string
+        is_host:
+          type: boolean
+        state:
+          type: string
+          enum:
+            - online
+        muted:
+          type: boolean
+        speaking:
+          type: boolean
+        voice_mode:
+          type: string
+          enum:
+            - push_to_talk
+        livekit_identity:
+          type: string
+        joined_at:
+          type: string
+          format: date-time
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_request
+                - invalid_anonymous_id
+                - anonymous_id_too_long
+                - invalid_avatar_id
+                - avatar_id_too_long
+                - invalid_nickname
+                - nickname_too_long
+                - room_name_too_long
+                - internal_error
+            message:
+              type: string
+              description: 用户可理解的中文错误消息。
