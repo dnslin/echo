@@ -323,3 +323,36 @@ Implemented invite-code join-room backend path, documented backend contracts, an
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Fix join-room review findings
+
+**Date**: 2026-07-08
+**Task**: Fix join-room review findings
+**Branch**: `issue-11-join-room-api`
+
+### Summary
+
+Fixed PR #33 review findings by making join-room persistence atomic, clearing retained empty-room expiry fields on successful join, adding regression tests, updating backend database specs, pushing the fix commit, and updating the PR body.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `434f884` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

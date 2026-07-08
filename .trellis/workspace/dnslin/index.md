@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-07-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~325 | Active |
+| `journal-1.md` | ~358 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-07-08 | Fix join-room review findings | `434f884` | `issue-11-join-room-api` |
 | 9 | 2026-07-08 | Issue 11 join room API | `ec1fca0`, `e4b23d3`, `19b22ba` | `issue-11-join-room-api` |
 | 8 | 2026-07-08 | PR32 code review findings 修复 | `d3e406d` | `issue-10-create-room-api` |
 | 7 | 2026-07-08 | Issue 10 创建临时房间 API | `3697309`, `a2df326`, `a11516e` | `issue-10-create-room-api` |
