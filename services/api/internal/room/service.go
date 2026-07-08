@@ -42,7 +42,6 @@ type Repository interface {
 type joinRepository interface {
 	FindRoomByInviteCode(ctx context.Context, inviteCode string) (domain.Room, error)
 	JoinRoomWithMember(ctx context.Context, room domain.Room, member domain.Member, activeStates []domain.MemberState, maxActiveMembers int, joinedAt time.Time) (domain.Room, error)
-	MarkRoomExpired(ctx context.Context, roomID string, updatedAt time.Time) error
 }
 
 type leaveRepository interface {
@@ -191,12 +190,6 @@ func (s *Service) JoinContext(ctx context.Context, input JoinInput) (JoinResult,
 	if foundRoom.State == domain.RoomStateExpired {
 		return JoinResult{}, ErrRoomExpired
 	}
-	if foundRoom.ExpiresAt != nil && !foundRoom.ExpiresAt.After(now) {
-		if err := repository.MarkRoomExpired(ctx, foundRoom.ID, now); err != nil {
-			return JoinResult{}, err
-		}
-		return JoinResult{}, ErrRoomExpired
-	}
 
 	memberID, err := s.idGenerator("mem")
 	if err != nil {
@@ -210,6 +203,9 @@ func (s *Service) JoinContext(ctx context.Context, input JoinInput) (JoinResult,
 		}
 		if errors.Is(err, domain.ErrRoomNotFound) {
 			return JoinResult{}, ErrInviteNotFound
+		}
+		if errors.Is(err, domain.ErrRoomExpired) {
+			return JoinResult{}, ErrRoomExpired
 		}
 		return JoinResult{}, err
 	}

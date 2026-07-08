@@ -126,7 +126,7 @@ Why correct: the transaction keeps room/member persistence atomic and the sentin
 ### 1. Scope / Trigger
 
 - Trigger: adding or modifying repository methods used by `POST /v1/rooms/join` or other invite-code join flows.
-- Applies to persisted room lookup, member capacity counting, atomic member insertion, retained-empty-room recovery, and marking rooms expired when `expires_at <= now`.
+- Applies to persisted room lookup, member capacity counting, atomic member insertion, retained-empty-room recovery, and transaction-owned expiry of due retained empty rooms.
 - Echo MVP still stores product room lifecycle and current member rows in SQLite; LiveKit must not become the authority for invite validity, expiry, or product capacity.
 
 ### 2. Signatures
@@ -156,10 +156,13 @@ const (
 - `CountRoomMembersByStates` counts only the caller-provided states; join-room capacity uses `online` and `reconnecting`.
 - `disconnected` members do not count toward the MVP room capacity limit.
 - `CreateMember` inserts exactly one member row and must preserve the service-provided `is_host`, voice state, and `livekit_identity` fields.
-- `JoinRoomWithMember` owns the successful join mutation: capacity count, over-capacity rejection, member insert, retained-empty-room recovery, and returned room snapshot must happen in one SQLite transaction.
+- `JoinRoomWithMember` owns the successful join mutation: transaction-state reload, active-member count, due-empty expiry decision, over-capacity rejection, member insert, retained-empty-room recovery, and returned room snapshot must happen in one SQLite transaction.
+- `JoinRoomWithMember` must reject rooms observed as `expired` inside the transaction with `domain.ErrRoomExpired`; do not trust only the earlier service lookup snapshot.
+- If the transaction observes `expires_at <= joinedAt` and zero active members, `JoinRoomWithMember` must mark the room `expired`, set `updated_at = joinedAt`, return `domain.ErrRoomExpired`, and not insert the joining member.
+- If the transaction observes `expires_at <= joinedAt` but at least one `online` or `reconnecting` member still exists, the room is not empty; a successful join may recover it by clearing stale `last_empty_at` / `expires_at`.
 - `JoinRoomWithMember` must reject capacity with `domain.ErrRoomFull` when the transaction observes `maxActiveMembers` or more members in the provided active states.
-- `JoinRoomWithMember` must clear `rooms.last_empty_at` and `rooms.expires_at`, and set `rooms.updated_at` to `joinedAt`, when a join succeeds for a retained empty room whose expiry fields are still present.
-- `MarkRoomExpired` updates `rooms.state` to `expired` and refreshes `updated_at`; if no row matches, return `domain.ErrRoomNotFound`.
+- `JoinRoomWithMember` must clear `rooms.last_empty_at` and `rooms.expires_at`, and set `rooms.updated_at` to `joinedAt`, when a join succeeds for a retained or stale-empty-metadata room whose expiry fields are still present.
+- `MarkRoomExpired` updates `rooms.state` to `expired` and refreshes `updated_at`; if no row matches, return `domain.ErrRoomNotFound`. Do not use it from the service as a stale pre-check replacement for `JoinRoomWithMember`'s transaction-owned due-empty decision.
 - Repository methods should accept `context.Context` from the service/handler chain.
 
 ### 4. Validation & Error Matrix
@@ -170,9 +173,12 @@ const (
 | invite code has no matching room | Return `domain.ErrRoomNotFound`. |
 | `states` argument to count is empty | Return `0, nil`; do not generate invalid SQL. |
 | DB count fails | Return the DB error to the service. |
+| atomic join observes room state `expired` | Return `domain.ErrRoomExpired`; do not insert the new member. |
+| atomic join observes `expires_at <= joinedAt` and zero active members | Mark room `expired`, set `updated_at`, return `domain.ErrRoomExpired`, and do not insert the new member. |
+| atomic join observes `expires_at <= joinedAt` but active members remain | Do not expire the room; a successful join clears stale empty metadata. |
 | atomic join observes `maxActiveMembers` active members | Return `domain.ErrRoomFull`; do not insert the new member. |
 | atomic join member insert fails | Roll back the join transaction and return the DB error to the service. |
-| atomic join succeeds for retained empty room | Insert the member, clear `last_empty_at` / `expires_at`, update `updated_at`, and return the recovered room snapshot. |
+| atomic join succeeds for retained or stale-empty-metadata room | Insert the member, clear `last_empty_at` / `expires_at`, update `updated_at`, and return the recovered room snapshot. |
 | member insert fails | Return the DB error to the service. |
 | expire update matches no room | Return `domain.ErrRoomNotFound`. |
 | expire update succeeds | Room state becomes `expired`; `updated_at` is set to the provided timestamp. |
@@ -196,6 +202,9 @@ const (
   - `CreateMember` persists a non-host joined member with `online`, unmuted, not speaking, `push_to_talk`, and `livekit_identity == member.ID`.
 - Atomic join tests:
   - `JoinRoomWithMember` clears retained-empty-room `last_empty_at` / `expires_at`, updates `updated_at`, and returns the recovered room snapshot;
+  - due retained empty room (`expires_at <= joinedAt` and zero active members) returns `domain.ErrRoomExpired`, persists `expired`, and does not insert the joining member;
+  - due retained room with an `online` or `reconnecting` member is not expired by join and clears stale empty metadata on success;
+  - transaction-observed `expired` room returns `domain.ErrRoomExpired` and does not insert the joining member;
   - concurrent `JoinRoomWithMember` calls against a room with 9 active members persist no more than 10 active members and return `domain.ErrRoomFull` for the over-capacity caller.
 - Expiry update test:
   - `MarkRoomExpired` changes state and `updated_at`;
@@ -285,14 +294,16 @@ domain.MemberStateDisconnected
   - `state = disconnected`;
   - `speaking = false`.
 - Leaving must start empty-room retention only if the leaving member was active and no active members remain after the update.
-- Last-active-member leave must set:
+- Last-active-member leave must set a fresh retention window, even if stale or partial empty metadata is already present:
   - `rooms.last_empty_at = leftAt`;
   - `rooms.expires_at = leftAt + retention`;
   - `rooms.updated_at = leftAt`;
   - `rooms.state` remains `active` until expiry.
 - Non-last-member leave must not set or refresh `last_empty_at` / `expires_at`.
-- Repeated leave for an already-disconnected member is idempotent and must not extend an existing expiry window.
+- Repeated leave for an already-disconnected member is idempotent before expiry and must not extend an existing expiry window.
+- Repeated leave after the retained empty room is due may mark the room `expired` and return `domain.ErrRoomExpired`; it must not silently extend the retention window.
 - Missing room rows return `domain.ErrRoomNotFound`; missing member rows return `domain.ErrMemberNotFound`; expired rooms return `domain.ErrRoomExpired`.
+- `ExpireEmptyRooms` must use the same immediate-write transaction shape as join/leave lifecycle writers when making active-count and room-expiry decisions.
 - `ExpireEmptyRooms` marks active rooms expired only when they have zero active members and either:
   - `expires_at IS NOT NULL AND expires_at <= now`; or
   - defensive compatibility case: `expires_at IS NULL`, `created_at <= now - retention`, and no active members exist.
@@ -308,8 +319,9 @@ domain.MemberStateDisconnected
 | room state is `expired` | Return `domain.ErrRoomExpired`; do not modify member rows. |
 | member ID has no row in that room | Return `domain.ErrMemberNotFound`. |
 | leaving active member while other active members remain | Mark member disconnected/speaking false; leave room retention fields unchanged. |
-| leaving last active member | Mark member disconnected/speaking false; set `last_empty_at` and `expires_at`. |
-| repeated leave of disconnected member | Return success; do not refresh `last_empty_at` or `expires_at`. |
+| leaving last active member | Mark member disconnected/speaking false; set a fresh `last_empty_at` and `expires_at` from `leftAt`, even if stale metadata exists. |
+| repeated leave of disconnected member before expiry | Return success; do not refresh `last_empty_at` or `expires_at`. |
+| repeated leave of disconnected member after due expiry and zero active members | Mark room `expired`, return `domain.ErrRoomExpired`, and do not extend retention. |
 | due retained room has active member | Do not expire it. |
 | due retained room has no active members | Mark room `expired`, update `updated_at`. |
 | old active room has no active members and no expiry metadata | Mark room `expired` in cleanup. |
@@ -327,7 +339,9 @@ domain.MemberStateDisconnected
   - active count excludes the left member;
   - non-last leave does not set room expiry fields;
   - last leave sets exact `last_empty_at`, `expires_at`, and `updated_at` using a fixed clock;
-  - repeated leave does not extend retention;
+  - last-active leave refreshes stale or partial empty metadata to `leftAt + retention`;
+  - repeated leave before expiry does not extend retention;
+  - repeated leave after due expiry returns `domain.ErrRoomExpired` and does not extend retention;
   - missing room/member and expired-room cases return the stable domain sentinels.
 - Expiry cleanup tests:
   - retained empty room with `expires_at <= now` becomes `expired`;
@@ -379,5 +393,8 @@ Why correct: the repository owns one SQLite transaction for member state, active
 - Do not add durable presence, reconnect, or speaking tables as part of create-room work; those are separate runtime-state concerns.
 - Do not depend on raw SQLite error strings outside the store layer; translate invite collisions once at the persistence boundary.
 - Do not count `disconnected` member rows toward join-room capacity.
+- Do not decide due retained-room expiry from a service-edge snapshot alone; the store transaction must observe current room state and active-member count.
+- Do not treat stale non-nil `last_empty_at` / `expires_at` as proof that a currently active room is empty.
 - Do not refresh `last_empty_at` / `expires_at` on repeated leave; a retrying client must not extend room lifetime.
+- Do not skip fresh retention setup on a true last-active leave just because stale empty metadata already exists.
 - Do not expire retained rooms that still have `online` or `reconnecting` members.

@@ -145,6 +145,106 @@ func TestLeaveRoomMemberRepeatedLeaveDoesNotExtendRetention(t *testing.T) {
 	assertRoomRetentionStarted(t, found, firstLeaveAt)
 }
 
+func TestLeaveRoomMemberLastActiveMemberRefreshesStaleOrPartialRetentionMetadata(t *testing.T) {
+	createdAt := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	oldEmptyAt := createdAt.Add(5 * time.Minute)
+	oldExpiresAt := oldEmptyAt.Add(testEmptyRoomRetention)
+	leftAt := oldExpiresAt.Add(5 * time.Minute)
+	tests := []struct {
+		name        string
+		roomID      string
+		inviteCode  string
+		lastEmptyAt *time.Time
+		expiresAt   *time.Time
+	}{
+		{
+			name:        "stale complete metadata",
+			roomID:      "room_leave_stale_retention",
+			inviteCode:  "LEAVSR",
+			lastEmptyAt: &oldEmptyAt,
+			expiresAt:   &oldExpiresAt,
+		},
+		{
+			name:        "partial missing expiry metadata",
+			roomID:      "room_leave_partial_retention",
+			inviteCode:  "LEAVPR",
+			lastEmptyAt: &oldEmptyAt,
+			expiresAt:   nil,
+		},
+		{
+			name:        "partial missing empty timestamp metadata",
+			roomID:      "room_leave_partial_empty_at",
+			inviteCode:  "LEAVPE",
+			lastEmptyAt: nil,
+			expiresAt:   &oldExpiresAt,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTestSQLite(t)
+			repository := NewRepository(db)
+			room := testRoom(tt.roomID, tt.inviteCode, createdAt)
+			room.LastEmptyAt = tt.lastEmptyAt
+			room.ExpiresAt = tt.expiresAt
+			room.UpdatedAt = oldEmptyAt
+			member := testMember("mem_"+tt.roomID, room.ID, createdAt)
+			member.State = domain.MemberStateReconnecting
+			if err := repository.CreateRoomWithMember(context.Background(), room, member); err != nil {
+				t.Fatalf("CreateRoomWithMember returned error: %v", err)
+			}
+
+			leftRoom, _, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
+			if err != nil {
+				t.Fatalf("LeaveRoomMember returned error: %v", err)
+			}
+
+			assertRoomRetentionStarted(t, leftRoom, leftAt)
+			found, err := repository.FindRoomByInviteCode(context.Background(), room.InviteCode)
+			if err != nil {
+				t.Fatalf("FindRoomByInviteCode returned error: %v", err)
+			}
+			assertRoomRetentionStarted(t, found, leftAt)
+		})
+	}
+}
+
+func TestLeaveRoomMemberRepeatedLeaveAfterRetentionExpiresReturnsRoomExpired(t *testing.T) {
+	db := openTestSQLite(t)
+	repository := NewRepository(db)
+	createdAt := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	lastEmptyAt := createdAt.Add(5 * time.Minute)
+	expiresAt := lastEmptyAt.Add(testEmptyRoomRetention)
+	leftAt := expiresAt.Add(time.Second)
+	room := testRoom("room_leave_repeat_expired", "LEAVEX", createdAt)
+	room.LastEmptyAt = &lastEmptyAt
+	room.ExpiresAt = &expiresAt
+	room.UpdatedAt = lastEmptyAt
+	member := testMember("mem_leave_repeat_expired", room.ID, createdAt)
+	member.State = domain.MemberStateDisconnected
+	if err := repository.CreateRoomWithMember(context.Background(), room, member); err != nil {
+		t.Fatalf("CreateRoomWithMember returned error: %v", err)
+	}
+
+	_, _, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
+	if !errors.Is(err, domain.ErrRoomExpired) {
+		t.Fatalf("LeaveRoomMember error = %v, want ErrRoomExpired", err)
+	}
+	found, err := repository.FindRoomByInviteCode(context.Background(), room.InviteCode)
+	if err != nil {
+		t.Fatalf("FindRoomByInviteCode returned error: %v", err)
+	}
+	if found.State != domain.RoomStateExpired || !found.UpdatedAt.Equal(leftAt) {
+		t.Fatalf("room state/updated_at = %q/%v, want expired/%v", found.State, found.UpdatedAt, leftAt)
+	}
+	if found.LastEmptyAt == nil || !found.LastEmptyAt.Equal(lastEmptyAt) {
+		t.Fatalf("room last_empty_at = %v, want unchanged %v", found.LastEmptyAt, lastEmptyAt)
+	}
+	if found.ExpiresAt == nil || !found.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("room expires_at = %v, want unchanged %v", found.ExpiresAt, expiresAt)
+	}
+}
+
 func TestLeaveRoomMemberReturnsStableMissingAndExpiredErrors(t *testing.T) {
 	db := openTestSQLite(t)
 	repository := NewRepository(db)

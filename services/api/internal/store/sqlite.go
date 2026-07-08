@@ -153,9 +153,25 @@ func (r *Repository) JoinRoomWithMember(ctx context.Context, room domain.Room, m
 		if err != nil {
 			return err
 		}
+		if domain.RoomState(roomModel.State) == domain.RoomStateExpired {
+			return domain.ErrRoomExpired
+		}
 		count, err := countRoomMembersByStates(tx, room.ID, activeStates)
 		if err != nil {
 			return err
+		}
+		if roomModel.ExpiresAt != nil && !roomModel.ExpiresAt.After(joinedAt) && count == 0 {
+			if err := tx.Model(&RoomModel{}).Where("id = ? AND state = ?", room.ID, string(domain.RoomStateActive)).Updates(map[string]any{
+				"state":      string(domain.RoomStateExpired),
+				"updated_at": joinedAt,
+			}).Error; err != nil {
+				return err
+			}
+			if err := conn.Exec("COMMIT").Error; err != nil {
+				return err
+			}
+			committed = true
+			return domain.ErrRoomExpired
 		}
 		if count >= maxActiveMembers {
 			return domain.ErrRoomFull
@@ -223,8 +239,28 @@ func (r *Repository) LeaveRoomMember(ctx context.Context, roomID string, memberI
 			return err
 		}
 
-		wasActive := memberStateIn(domain.MemberState(memberModel.State), activeStates)
-		if domain.MemberState(memberModel.State) != domain.MemberStateDisconnected || memberModel.Speaking {
+		memberState := domain.MemberState(memberModel.State)
+		wasActive := memberStateIn(memberState, activeStates)
+		if !wasActive && roomModel.ExpiresAt != nil && !roomModel.ExpiresAt.After(leftAt) {
+			count, err := countRoomMembersByStates(tx, roomID, activeStates)
+			if err != nil {
+				return err
+			}
+			if count == 0 {
+				if err := tx.Model(&RoomModel{}).Where("id = ? AND state = ?", roomID, string(domain.RoomStateActive)).Updates(map[string]any{
+					"state":      string(domain.RoomStateExpired),
+					"updated_at": leftAt,
+				}).Error; err != nil {
+					return err
+				}
+				if err := conn.Exec("COMMIT").Error; err != nil {
+					return err
+				}
+				committed = true
+				return domain.ErrRoomExpired
+			}
+		}
+		if memberState != domain.MemberStateDisconnected || memberModel.Speaking {
 			updates := map[string]any{
 				"state":    string(domain.MemberStateDisconnected),
 				"speaking": false,
@@ -241,7 +277,7 @@ func (r *Repository) LeaveRoomMember(ctx context.Context, roomID string, memberI
 			if err != nil {
 				return err
 			}
-			if count == 0 && roomModel.LastEmptyAt == nil && roomModel.ExpiresAt == nil {
+			if count == 0 {
 				expiresAt := leftAt.Add(retention)
 				updates := map[string]any{
 					"last_empty_at": leftAt,
@@ -296,7 +332,18 @@ func (r *Repository) ExpireEmptyRooms(ctx context.Context, now time.Time, retent
 	expired := 0
 	cutoff := now.Add(-retention)
 	activeStates := activeLifecycleMemberStates()
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := r.db.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		if err := conn.Exec("BEGIN IMMEDIATE").Error; err != nil {
+			return err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = conn.Exec("ROLLBACK").Error
+			}
+		}()
+
+		tx := conn.Session(&gorm.Session{SkipDefaultTransaction: true})
 		var rooms []RoomModel
 		if err := tx.Where("state = ?", string(domain.RoomStateActive)).Find(&rooms).Error; err != nil {
 			return err
@@ -323,6 +370,10 @@ func (r *Repository) ExpireEmptyRooms(ctx context.Context, now time.Time, retent
 			}
 			expired += int(result.RowsAffected)
 		}
+		if err := conn.Exec("COMMIT").Error; err != nil {
+			return err
+		}
+		committed = true
 		return nil
 	})
 	if err != nil {
