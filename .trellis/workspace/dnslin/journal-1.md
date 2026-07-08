@@ -288,3 +288,38 @@ Validated the Wails 3 WebView2 LiveKit JS audio path, added automated spike cove
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Issue 11 join room API
+
+**Date**: 2026-07-08
+**Task**: Issue 11 join room API
+**Branch**: `issue-11-join-room-api`
+
+### Summary
+
+Implemented invite-code join-room backend path, documented backend contracts, and recorded Trellis planning artifacts.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ec1fca0` | (see git log) |
+| `e4b23d3` | (see git log) |
+| `19b22ba` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
