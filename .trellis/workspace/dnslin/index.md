@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
+- **Total Sessions**: 8
 - **Last Active**: 2026-07-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~257 | Active |
+| `journal-1.md` | ~290 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-07-08 | PR32 code review findings 修复 | `d3e406d` | `issue-10-create-room-api` |
 | 7 | 2026-07-08 | Issue 10 创建临时房间 API | `3697309`, `a2df326`, `a11516e` | `issue-10-create-room-api` |
 | 6 | 2026-07-08 | Issue 9 push-to-talk keyboard spike | `d0a0b68`, `f46bc50`, `ef85654` | `issue-9-push-to-talk-keyboard` |
 | 5 | 2026-07-08 | Issue 8 Wails LiveKit audio spike | `a884da3`, `c47b221`, `276269d` | `issue-8-wails-livekit-audio` |

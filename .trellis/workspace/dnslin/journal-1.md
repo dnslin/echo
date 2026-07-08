@@ -255,3 +255,36 @@ Validated the Wails 3 WebView2 LiveKit JS audio path, added automated spike cove
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: PR32 code review findings 修复
+
+**Date**: 2026-07-08
+**Task**: PR32 code review findings 修复
+**Branch**: `issue-10-create-room-api`
+
+### Summary
+
+修复 create-room API review findings：补齐 OpenAPI 500/internal_error 契约，传播 HTTP request context，限制 create-room 请求体和 anonymous/avatar 字段长度，清理 SQLite migration 失败后的 DB pool，并补充回归测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d3e406d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
