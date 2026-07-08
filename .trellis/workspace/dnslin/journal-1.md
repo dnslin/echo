@@ -185,3 +185,38 @@ Validated the Wails 3 WebView2 LiveKit JS audio path, added automated spike cove
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Issue 9 push-to-talk keyboard spike
+
+**Date**: 2026-07-08
+**Task**: Issue 9 push-to-talk keyboard spike
+**Branch**: `issue-9-push-to-talk-keyboard`
+
+### Summary
+
+实现 Issue #9 按键说话 press/release spike：新增 Windows keyboard hook、Wails 事件桥接、KeyboardSpike UI/状态测试与 pending HITL 文档；更新前端 code-spec 并提交 Trellis 任务上下文。自动验证与 trellis-check 均通过，Windows HITL 保持 pending/not tested。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d0a0b68` | (see git log) |
+| `f46bc50` | (see git log) |
+| `ef85654` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
