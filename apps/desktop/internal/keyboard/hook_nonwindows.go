@@ -18,7 +18,7 @@ func NewHook(targetKey string, onEvent func(Event)) *Hook {
 }
 
 func (h *Hook) Start() error {
-	return nil
+	return ErrUnsupported
 }
 
 func (h *Hook) Stop() {}

@@ -31,6 +31,7 @@ var (
 	procCallNextHookEx      = user32.NewProc("CallNextHookEx")
 	procUnhookWindowsHookEx = user32.NewProc("UnhookWindowsHookEx")
 	procGetMessageW         = user32.NewProc("GetMessageW")
+	procPeekMessageW        = user32.NewProc("PeekMessageW")
 	procTranslateMessage    = user32.NewProc("TranslateMessage")
 	procDispatchMessageW    = user32.NewProc("DispatchMessageW")
 	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
@@ -141,12 +142,7 @@ func (h *Hook) Stop() {
 	h.running = false
 	h.mu.Unlock()
 
-	if threadID != 0 {
-		posted, _, _ := procPostThreadMessageW.Call(uintptr(threadID), wmQuit, 0, 0)
-		if posted == 0 {
-			h.unhook()
-		}
-	}
+	requestThreadQuit(threadID, postThreadQuit, h.unhook)
 	if done != nil {
 		select {
 		case <-done:
@@ -170,6 +166,8 @@ func (h *Hook) run(started chan<- error, done chan struct{}, events chan Event) 
 		close(events)
 		<-dispatcherDone
 	}()
+
+	ensureMessageQueue()
 
 	h.mu.Lock()
 	h.threadID = currentThreadID()
@@ -290,6 +288,16 @@ func virtualKeyCode(key string) uint32 {
 		return uint32(character)
 	}
 	return 0
+}
+
+func ensureMessageQueue() {
+	var msg message
+	procPeekMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0, 0)
+}
+
+func postThreadQuit(threadID uint32) bool {
+	posted, _, _ := procPostThreadMessageW.Call(uintptr(threadID), wmQuit, 0, 0)
+	return posted != 0
 }
 
 func currentThreadID() uint32 {
