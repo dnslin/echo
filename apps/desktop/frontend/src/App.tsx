@@ -1,7 +1,7 @@
-import { LiveKitAudioSpike } from './spike/LiveKitAudioSpike'
+import { KeyboardSpike } from './spike/KeyboardSpike'
 
 function App() {
-  return <LiveKitAudioSpike />
+  return <KeyboardSpike />
 }
 
 export default App

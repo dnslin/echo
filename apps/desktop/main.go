@@ -4,6 +4,8 @@ import (
 	"log"
 	"sync/atomic"
 
+	"echo/apps/desktop/internal/keyboard"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -49,6 +51,15 @@ func main() {
 	})
 
 	tray.AttachWindow(mainWindow).WindowOffset(5).SetMenu(menu)
+
+	keyboardHook := keyboard.NewHook(keyboard.DefaultTargetKey, func(event keyboard.Event) {
+		app.Event.Emit(keyboard.PushToTalkEventName, event)
+	})
+	if err := keyboardHook.Start(); err != nil {
+		log.Printf("keyboard hook disabled: %v", err)
+	} else {
+		defer keyboardHook.Stop()
+	}
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
