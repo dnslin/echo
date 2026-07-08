@@ -21,7 +21,7 @@ func main() {
 		os.Exit(1)
 	}
 	roomService := room.NewService(store.NewRepository(db), invite.NewGenerator())
-	router := httpapi.NewRouter(httpapi.WithRoomCreator(roomService))
+	router := httpapi.NewRouter(httpapi.WithRoomCreator(roomService), httpapi.WithRoomJoiner(roomService))
 
 	logger.Info("api starting", "addr", cfg.HTTPAddr)
 	if err := router.Run(cfg.HTTPAddr); err != nil {

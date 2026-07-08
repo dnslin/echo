@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Repository transaction contracts for SQLite room/member persistence and join-room access."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Join-room public error mapping must remain unchanged."}
+{"file":".trellis/spec/backend/invite-guidelines.md","reason":"Invite normalization behavior must remain unchanged while fixing join persistence."}
+{"file":".trellis/tasks/07-08-fix-join-room-review-findings/prd.md","reason":"Task requirements and acceptance criteria for code-review fixes."}
+{"file":".trellis/tasks/07-08-fix-join-room-review-findings/design.md","reason":"Atomic join and retained-room recovery design."}

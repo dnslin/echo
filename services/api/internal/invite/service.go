@@ -5,11 +5,43 @@ import (
 	"errors"
 	"io"
 	"math/big"
+	"unicode"
 )
 
 const CharSet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-var ErrInvalidLength = errors.New("invite code length must be positive")
+var (
+	ErrInvalidLength = errors.New("invite code length must be positive")
+	ErrEmptyCode     = errors.New("invite code is empty")
+	ErrInvalidFormat = errors.New("invite code format is invalid")
+)
+
+func Normalize(input string) (string, error) {
+	code := make([]rune, 0, 6)
+	for _, ch := range input {
+		if unicode.IsSpace(ch) || ch == '-' {
+			continue
+		}
+		if ch >= 'a' && ch <= 'z' {
+			ch -= 'a' - 'A'
+		}
+		if !isAllowedCodeRune(ch) {
+			return "", ErrInvalidFormat
+		}
+		code = append(code, ch)
+	}
+	if len(code) == 0 {
+		return "", ErrEmptyCode
+	}
+	if len(code) != 6 {
+		return "", ErrInvalidFormat
+	}
+	return string(code), nil
+}
+
+func isAllowedCodeRune(ch rune) bool {
+	return (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+}
 
 type Generator struct {
 	reader io.Reader

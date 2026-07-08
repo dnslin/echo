@@ -5,7 +5,11 @@ import (
 	"time"
 )
 
-var ErrInviteCodeConflict = errors.New("invite code conflict")
+var (
+	ErrInviteCodeConflict = errors.New("invite code conflict")
+	ErrRoomNotFound       = errors.New("room not found")
+	ErrRoomFull           = errors.New("room full")
+)
 
 type RoomState string
 
@@ -17,7 +21,9 @@ const (
 type MemberState string
 
 const (
-	MemberStateOnline MemberState = "online"
+	MemberStateOnline       MemberState = "online"
+	MemberStateReconnecting MemberState = "reconnecting"
+	MemberStateDisconnected MemberState = "disconnected"
 )
 
 type VoiceMode string

@@ -132,6 +132,154 @@ paths:
                     error:
                       code: internal_error
                       message: 服务器错误
+  /v1/rooms/join:
+    post:
+      summary: 通过邀请码加入临时房间
+      operationId: joinRoom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JoinRoomRequest"
+            examples:
+              valid:
+                value:
+                  invite_code: k7-m9 q2
+                  anonymous_id: anon_local_456
+                  nickname: Alice
+                  avatar_id: avatar_08
+      responses:
+        "200":
+          description: 加入临时房间成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateRoomResponse"
+              examples:
+                joined:
+                  value:
+                    room:
+                      id: room_abc
+                      name: 今晚开黑
+                      invite_code: K7M9Q2
+                      state: active
+                      created_at: "2026-07-08T12:00:00Z"
+                      last_empty_at: null
+                      expires_at: null
+                    member:
+                      id: mem_def
+                      room_id: room_abc
+                      anonymous_id: anon_local_456
+                      nickname: Alice
+                      avatar_id: avatar_08
+                      is_host: false
+                      state: online
+                      muted: false
+                      speaking: false
+                      voice_mode: push_to_talk
+                      livekit_identity: mem_def
+                      joined_at: "2026-07-08T12:01:00Z"
+        "400":
+          description: 请求校验失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidRequest:
+                  value:
+                    error:
+                      code: invalid_request
+                      message: 请求格式无效
+                emptyInviteCode:
+                  value:
+                    error:
+                      code: empty_invite_code
+                      message: 请输入邀请码
+                invalidInviteFormat:
+                  value:
+                    error:
+                      code: invalid_invite_format
+                      message: 邀请码应为 6 位字母或数字
+                invalidAnonymousId:
+                  value:
+                    error:
+                      code: invalid_anonymous_id
+                      message: 匿名身份不能为空
+                anonymousIdTooLong:
+                  value:
+                    error:
+                      code: anonymous_id_too_long
+                      message: 匿名身份最多 128 个字符
+                invalidAvatarId:
+                  value:
+                    error:
+                      code: invalid_avatar_id
+                      message: 请选择头像
+                avatarIdTooLong:
+                  value:
+                    error:
+                      code: avatar_id_too_long
+                      message: 头像标识最多 64 个字符
+                invalidNickname:
+                  value:
+                    error:
+                      code: invalid_nickname
+                      message: 请输入昵称
+                nicknameTooLong:
+                  value:
+                    error:
+                      code: nickname_too_long
+                      message: 昵称最多 16 个字符
+        "404":
+          description: 邀请码不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                inviteNotFound:
+                  value:
+                    error:
+                      code: invite_not_found
+                      message: 邀请码无效，请检查后重试
+        "409":
+          description: 房间人数已满
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                roomFull:
+                  value:
+                    error:
+                      code: room_full
+                      message: 房间人数已满，暂时无法加入
+        "410":
+          description: 房间已过期
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                roomExpired:
+                  value:
+                    error:
+                      code: room_expired
+                      message: 该房间已过期，请让朋友重新创建
+        "500":
+          description: 服务端错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                internalError:
+                  value:
+                    error:
+                      code: internal_error
+                      message: 服务器错误
 components:
   schemas:
     CreateRoomRequest:
@@ -160,6 +308,34 @@ components:
           type: string
           maxLength: 24
           description: 可选临时房间名；为空时服务端使用短默认名称。
+    JoinRoomRequest:
+      type: object
+      required:
+        - invite_code
+        - anonymous_id
+        - nickname
+        - avatar_id
+      properties:
+        invite_code:
+          type: string
+          description: 邀请码输入；服务端忽略空白和 ASCII 短横线，并转换为 6 位大写字母数字。
+          examples:
+            - k7-m9 q2
+        anonymous_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 本机匿名身份，非账号；服务端会裁剪前后空白。
+        nickname:
+          type: string
+          minLength: 1
+          maxLength: 16
+          description: 成员展示昵称；服务端会裁剪前后空白，允许与房间内其他成员重复。
+        avatar_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 随机头像标识；服务端会裁剪前后空白。
     CreateRoomResponse:
       type: object
       required:
@@ -279,6 +455,11 @@ components:
                 - invalid_nickname
                 - nickname_too_long
                 - room_name_too_long
+                - empty_invite_code
+                - invalid_invite_format
+                - invite_not_found
+                - room_expired
+                - room_full
                 - internal_error
             message:
               type: string
