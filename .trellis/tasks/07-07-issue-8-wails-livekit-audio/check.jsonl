@@ -1,0 +1,7 @@
+{"file":"prd.md","reason":"Verify Issue #8 implementation stays within MVP voice requirements and privacy boundaries."}
+{"file":"design.md","reason":"Verify implementation matches the planned WebView2 + LiveKit media architecture."}
+{"file":"docs/adr/0007-webview-livekit-audio-devices.md","reason":"Check no Go audio capture/playback/mixing pipeline is introduced."}
+{"file":"docs/adr/0021-short-lived-livekit-tokens.md","reason":"Check no LiveKit token or secret is persisted in code, logs, or docs."}
+{"file":"docs/adr/0029-layered-testing-with-manual-desktop-media-acceptance.md","reason":"Check automated tests are not misrepresented as replacing Windows HITL audio acceptance."}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"Check Wails frontend build, spike isolation, and existing scaffold contracts remain valid."}
+{"file":"docs/spikes/device-tray.md","reason":"Check Issue #8 does not regress or duplicate existing device/tray decisions."}
