@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"sync/atomic"
+
+	"echo/apps/desktop/internal/keyboard"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -50,7 +53,34 @@ func main() {
 
 	tray.AttachWindow(mainWindow).WindowOffset(5).SetMenu(menu)
 
+	hookStatus := keyboard.HookStatus{Status: keyboard.HookStatusDisabled, Message: "native hook not started"}
+	emitHookStatus := func() {
+		app.Event.Emit(keyboard.HookStatusEventName, hookStatus)
+	}
+	app.Event.On(keyboard.HookStatusRequestEventName, func(_ *application.CustomEvent) {
+		emitHookStatus()
+	})
+
+	keyboardHook := keyboard.NewHook(keyboard.DefaultTargetKey, func(event keyboard.Event) {
+		app.Event.Emit(keyboard.PushToTalkEventName, event)
+	})
+	if err := keyboardHook.Start(); err != nil {
+		log.Printf("keyboard hook disabled: %v", err)
+		hookStatus = hookStatusFromError(err)
+	} else {
+		hookStatus = keyboard.HookStatus{Status: keyboard.HookStatusEnabled}
+		defer keyboardHook.Stop()
+	}
+	emitHookStatus()
+
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func hookStatusFromError(err error) keyboard.HookStatus {
+	if errors.Is(err, keyboard.ErrUnsupported) {
+		return keyboard.HookStatus{Status: keyboard.HookStatusUnsupported, Message: err.Error()}
+	}
+	return keyboard.HookStatus{Status: keyboard.HookStatusDisabled, Message: err.Error()}
 }

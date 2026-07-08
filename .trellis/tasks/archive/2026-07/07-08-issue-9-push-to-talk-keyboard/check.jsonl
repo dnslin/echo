@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "frontend quality entry point"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "desktop spike validation and Wails build contracts"}
+{"file": ".trellis/tasks/archive/2026-07/07-08-issue-9-push-to-talk-keyboard/research/wails-keyboard-event-bridge.md", "reason": "verify event bridge follows researched Wails APIs"}

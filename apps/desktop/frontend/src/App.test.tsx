@@ -1,41 +1,27 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('livekit-client', () => ({
-  Room: vi.fn(),
-  RoomEvent: {
-    Connected: 'connected',
-    Disconnected: 'disconnected',
-    Reconnecting: 'reconnecting',
-    Reconnected: 'reconnected',
-    TrackSubscribed: 'trackSubscribed',
-    TrackUnsubscribed: 'trackUnsubscribed',
-    AudioPlaybackStatusChanged: 'audioPlaybackChanged',
-    MediaDevicesChanged: 'mediaDevicesChanged',
-    MediaDevicesError: 'mediaDevicesError',
-  },
-  Track: {
-    Kind: {
-      Audio: 'audio',
-    },
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn(() => () => undefined),
+    Emit: vi.fn(() => Promise.resolve(true)),
   },
 }))
 
 import App from './App'
 
-describe('App LiveKit audio spike smoke', () => {
+describe('App keyboard spike smoke', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
   })
 
-  it('renders visible echo LiveKit audio spike content', () => {
+  it('renders visible echo keyboard spike content', () => {
     render(<App />)
 
-    expect(screen.getByRole('heading', { name: 'LiveKit 音频路径验证' })).toBeVisible()
-    expect(screen.getByLabelText('LiveKit URL')).toBeVisible()
-    expect(screen.getByLabelText('短期 join token')).toBeVisible()
-    expect(screen.getByRole('button', { name: '连接并发布麦克风' })).toBeVisible()
-    expect(screen.getByText(/只记录非 secret 状态/)).toBeVisible()
+    expect(screen.getByRole('heading', { name: '按键说话 press/release 验证' })).toBeVisible()
+    expect(screen.getByText('当前目标键：V')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Windows native hook（游戏前台验证）' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'WebView DOM fallback（仅 echo 聚焦对照）' })).toBeVisible()
   })
 })
