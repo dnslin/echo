@@ -298,3 +298,130 @@ await audio.setSinkId(deviceId)
 ```
 
 Why correct: output device switching stays capability-based and preserves the documented fallback to the system default output device.
+
+---
+
+## Scenario: Desktop LiveKit audio spike
+
+### 1. Scope / Trigger
+
+- Trigger: validating or extending `apps/desktop/**` behavior that touches LiveKit JS media connection, microphone publishing, remote audio subscription, or Windows WebView2 LiveKit HITL records.
+- Applies to `apps/desktop/frontend/src/spike/LiveKitAudioSpike.tsx`, `apps/desktop/frontend/src/spike/LiveKitAudioSpike.test.tsx`, `apps/desktop/frontend/src/App.tsx`, LiveKit dependency metadata, and `docs/spikes/wails-livekit-audio.md`.
+- This is a code-spec because LiveKit dependency choice, token handling, remote audio DOM attachment, cleanup behavior, and HITL pass/fail records are executable safety contracts.
+
+### 2. Signatures
+
+- LiveKit dependency:
+
+```json
+{
+  "dependencies": {
+    "livekit-client": "^2.x"
+  }
+}
+```
+
+- Spike component route:
+
+```typescript
+import { LiveKitAudioSpike } from './spike/LiveKitAudioSpike'
+
+function App() {
+  return <LiveKitAudioSpike />
+}
+```
+
+- LiveKit client imports:
+
+```typescript
+import { Room, RoomEvent, Track } from 'livekit-client'
+```
+
+- Connect/publish sequence:
+
+```typescript
+await room.connect(livekitUrl, joinToken, { autoSubscribe: true })
+await room.localParticipant.setMicrophoneEnabled(true)
+```
+
+- Remote audio subscription:
+
+```typescript
+if (track.kind === Track.Kind.Audio) {
+  const element = track.attach()
+  remoteAudioContainer.appendChild(element)
+}
+```
+
+### 3. Contracts
+
+- Use `livekit-client` directly for the spike. Do not add `@livekit/components-react` unless a later formal product UI task proves that React component layer is necessary.
+- The LiveKit URL and short-lived join token may exist only in the current page's React/session memory while the manual test is running.
+- Do not write LiveKit URL, token, API key, API secret, room session secret, reusable credential, or audio content to committed docs, source code, logs, global window variables, `localStorage`, or `sessionStorage`.
+- Visible errors that may include a join token must redact the active token before rendering.
+- Register connection, reconnection, track subscription, track unsubscription, media-device error, and audio-playback status handlers before connecting.
+- Use `setMicrophoneEnabled(true)` after explicit user action. Do not use `enableCameraAndMicrophone()` for an audio-only spike.
+- Attach remote audio only into a dedicated container owned by the spike page. Do not append spike audio to `document.body`.
+- Disconnect cleanup must call `room.disconnect(true)` and detach/remove any attached remote audio elements.
+- `RoomEvent.AudioPlaybackStatusChanged` should read `room.canPlaybackAudio` to decide whether to ask the user to resume playback.
+- HITL records may state LiveKit Cloud public WSS passed only when the user actually verifies bidirectional audio. That record must not claim self-hosted LiveKit, external Nginx, TURN, formal temporary rooms, invite codes, business WebSocket, member lists, or product token issuance passed.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Empty LiveKit URL | Show `请输入 LiveKit URL`; do not create a room. |
+| Empty join token | Show `请输入短期 join token`; do not create a room. |
+| `room.connect` rejects with a message containing token text | Render a redacted error with `[token已隐藏]`; never display the raw token. |
+| Local microphone publish succeeds | Show connected/published state and keep media in WebView2 + LiveKit JS. |
+| Remote audio track is subscribed | `track.attach()` creates an audio element and the element is appended to the spike container. |
+| Remote audio track is unsubscribed | Call `track.detach()` and remove the corresponding element. |
+| User clicks disconnect or component unmounts | Call `room.disconnect(true)`, detach/remove remote audio elements, and clear the active token reference. |
+| Audio playback is blocked | Use `room.canPlaybackAudio` and expose a user action to resume playback. |
+| HITL uses LiveKit Cloud | Record Cloud/public-WSS result and explicitly list unverified deployment boundaries. |
+| HITL is not run yet | Keep `docs/spikes/wails-livekit-audio.md` as pending/fail-safe; do not write `Result: pass`. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: the spike installs only `livekit-client`, stores the token in React memory for the current session, redacts token-bearing errors, attaches remote audio under a page-owned container, cleans up with `track.detach()` and `room.disconnect(true)`, and records Windows HITL without secrets.
+- Base: automated tests validate connection/publish calls, token redaction, remote audio attach/detach cleanup, and smoke rendering. Manual HITL remains required before the spike can be marked pass.
+- Bad: using `@livekit/components-react` for the spike without need, persisting tokens, writing token-like values to docs, attaching audio to `document.body`, using camera APIs, claiming self-hosted deployment passed after a LiveKit Cloud-only test, or adding Go audio capture/playback as a workaround.
+
+### 6. Tests Required
+
+- From `apps/desktop/frontend`: `npm run test:run`.
+  - Assert the public `App` route renders the LiveKit audio spike controls.
+  - Assert connect calls `room.connect(url, token, { autoSubscribe: true })` and then `setMicrophoneEnabled(true)`.
+  - Assert visible connection errors redact the join token.
+  - Assert subscribed remote audio uses `track.attach()` and appears under the dedicated remote-audio container.
+  - Assert disconnect cleanup calls `room.disconnect(true)`, calls `track.detach()`, and removes remote audio elements.
+- From `apps/desktop/frontend`: `npm run build`.
+- From `apps/desktop`: `go test ./...` or from repo root `go -C apps/desktop test ./...`.
+- From `apps/desktop`: `wails3 build`.
+- Manual Windows HITL: `wails3 dev`, public LiveKit WSS URL, short-lived token, second client in the same LiveKit room, and bidirectional audio confirmation. Record only non-secret summary fields.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+await room.localParticipant.enableCameraAndMicrophone()
+document.body.appendChild(track.attach())
+;(window as any).debugToken = token
+```
+
+Why wrong: it requests video unnecessarily, leaks spike audio outside the page-owned container, and persists a sensitive join token globally.
+
+#### Correct
+
+```typescript
+await room.connect(livekitUrl, joinToken, { autoSubscribe: true })
+await room.localParticipant.setMicrophoneEnabled(true)
+
+if (track.kind === Track.Kind.Audio) {
+  const element = track.attach()
+  remoteAudioContainer.appendChild(element)
+}
+```
+
+Why correct: it validates only the audio media path, keeps remote playback inside the spike UI, and avoids unnecessary camera permission or token exposure.
