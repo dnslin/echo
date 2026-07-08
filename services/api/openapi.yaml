@@ -280,6 +280,94 @@ paths:
                     error:
                       code: internal_error
                       message: 服务器错误
+  /v1/rooms/{room_id}/leave:
+    post:
+      summary: 离开临时房间
+      operationId: leaveRoom
+      parameters:
+        - name: room_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+          description: 临时房间标识。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeaveRoomRequest"
+            examples:
+              valid:
+                value:
+                  member_id: mem_abc
+      responses:
+        "204":
+          description: 成员已离开临时房间
+        "400":
+          description: 请求校验失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidRequest:
+                  value:
+                    error:
+                      code: invalid_request
+                      message: 请求格式无效
+                invalidRoomId:
+                  value:
+                    error:
+                      code: invalid_room_id
+                      message: 房间标识不能为空
+                invalidMemberId:
+                  value:
+                    error:
+                      code: invalid_member_id
+                      message: 成员标识不能为空
+        "404":
+          description: 房间或成员不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                roomNotFound:
+                  value:
+                    error:
+                      code: room_not_found
+                      message: 房间不存在或已失效
+                memberNotFound:
+                  value:
+                    error:
+                      code: member_not_found
+                      message: 成员不在房间中
+        "410":
+          description: 房间已过期
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                roomExpired:
+                  value:
+                    error:
+                      code: room_expired
+                      message: 该房间已过期，请让朋友重新创建
+        "500":
+          description: 服务端错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                internalError:
+                  value:
+                    error:
+                      code: internal_error
+                      message: 服务器错误
 components:
   schemas:
     CreateRoomRequest:
@@ -336,6 +424,15 @@ components:
           minLength: 1
           maxLength: 64
           description: 随机头像标识；服务端会裁剪前后空白。
+    LeaveRoomRequest:
+      type: object
+      required:
+        - member_id
+      properties:
+        member_id:
+          type: string
+          minLength: 1
+          description: 要离开临时房间的成员标识；服务端会裁剪前后空白。
     CreateRoomResponse:
       type: object
       required:
@@ -457,7 +554,11 @@ components:
                 - room_name_too_long
                 - empty_invite_code
                 - invalid_invite_format
+                - invalid_room_id
+                - invalid_member_id
                 - invite_not_found
+                - room_not_found
+                - member_not_found
                 - room_expired
                 - room_full
                 - internal_error

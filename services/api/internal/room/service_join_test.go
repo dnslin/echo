@@ -197,17 +197,35 @@ func TestJoinRejectsExpiredRoomState(t *testing.T) {
 	}
 }
 
-func TestJoinRejectsRoomPastExpiryAndMarksItExpired(t *testing.T) {
+func TestJoinDueRetainedRoomWithActiveMemberClearsExpiryFields(t *testing.T) {
 	expiresAt := fixedNow
-	repository := newJoinFakeRepository(joinTestRoom("room_expired_at", "EXP456", domain.RoomStateActive, &expiresAt))
+	lastEmptyAt := fixedNow.Add(-emptyRoomRetention)
+	retainedRoom := joinTestRoom("room_due_active", "DUEACT", domain.RoomStateActive, &expiresAt)
+	retainedRoom.LastEmptyAt = &lastEmptyAt
+	retainedRoom.UpdatedAt = lastEmptyAt
+	repository := newJoinFakeRepository(retainedRoom)
+	service := newTestService(repository, &fakeInviteGenerator{})
+
+	result, err := service.Join(JoinInput{InviteCode: "DUEACT", AnonymousID: "anon_local_456", Nickname: "Alice", AvatarID: "avatar_08"})
+	if err != nil {
+		t.Fatalf("Join due retained room with active member returned error: %v", err)
+	}
+	if len(repository.markedExpiredRooms) != 0 {
+		t.Fatalf("marked expired rooms = %#v, want none", repository.markedExpiredRooms)
+	}
+	if result.Room.LastEmptyAt != nil || result.Room.ExpiresAt != nil {
+		t.Fatalf("result room empty/expiry fields = %v/%v, want nil/nil", result.Room.LastEmptyAt, result.Room.ExpiresAt)
+	}
+}
+
+func TestJoinMapsAtomicExpiredRoomFromRepository(t *testing.T) {
+	repository := newJoinFakeRepository(joinTestRoom("room_atomic_expired", "EXP456", domain.RoomStateActive, nil))
+	repository.createMemberErr = domain.ErrRoomExpired
 	service := newTestService(repository, &fakeInviteGenerator{})
 
 	_, err := service.Join(JoinInput{InviteCode: "EXP456", AnonymousID: "anon_local_456", Nickname: "Alice", AvatarID: "avatar_08"})
 	if !errors.Is(err, ErrRoomExpired) {
 		t.Fatalf("Join error = %v, want ErrRoomExpired", err)
-	}
-	if len(repository.markedExpiredRooms) != 1 || repository.markedExpiredRooms[0] != "room_expired_at" {
-		t.Fatalf("marked expired rooms = %#v, want room_expired_at", repository.markedExpiredRooms)
 	}
 	if len(repository.createdMembers) != 0 {
 		t.Fatalf("created members = %d, want 0", len(repository.createdMembers))

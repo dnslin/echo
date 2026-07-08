@@ -8,6 +8,8 @@ import (
 var (
 	ErrInviteCodeConflict = errors.New("invite code conflict")
 	ErrRoomNotFound       = errors.New("room not found")
+	ErrMemberNotFound     = errors.New("member not found")
+	ErrRoomExpired        = errors.New("room expired")
 	ErrRoomFull           = errors.New("room full")
 )
 

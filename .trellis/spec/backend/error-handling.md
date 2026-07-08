@@ -282,9 +282,138 @@ Why correct: the service owns product rules, and HTTP owns only transport bindin
 
 ---
 
+## Scenario: Leave temporary room HTTP validation errors
+
+### 1. Scope / Trigger
+
+- Trigger: adding or modifying `POST /v1/rooms/{room_id}/leave` or other leave-room command endpoints under `services/api/internal/http/**`.
+- Applies to request binding, path/body validation, room-service leave errors, HTTP status mapping, JSON error envelopes, and OpenAPI error examples.
+- The leave command is a product lifecycle command. HTTP must not delete rows directly, query SQLite directly, or invent room-owner behavior.
+
+### 2. Signatures
+
+- Leave-room endpoint:
+
+```http
+POST /v1/rooms/{room_id}/leave
+Content-Type: application/json
+```
+
+- Leave-room request body:
+
+```json
+{
+  "member_id": "mem_abc"
+}
+```
+
+- Room service call:
+
+```go
+func (s *Service) LeaveContext(ctx context.Context, input room.LeaveInput) (room.LeaveResult, error)
+```
+
+- Router option:
+
+```go
+func WithRoomLeaver(roomLeaver roomLeaver) RouterOption
+```
+
+- Success response:
+
+```http
+204 No Content
+```
+
+### 3. Contracts
+
+- `POST /v1/rooms/{room_id}/leave` must cap request-body bytes before JSON binding, using the same command-body limit as create/join unless a later spec changes all three endpoints.
+- Invalid JSON, oversized request bodies, or binding failure returns HTTP `400` with code `invalid_request` and message `请求格式无效`.
+- The handler passes the path `room_id` and body `member_id` to `LeaveContext`; it must pass `c.Request.Context()` unchanged.
+- Success returns `204 No Content` with no room/member body.
+- Leave success must not include LiveKit token, room session token, WebSocket data, room-owner controls, account information, or member-history payloads.
+- OpenAPI must document every public leave error code the handler can return.
+
+### 4. Validation & Error Matrix
+
+| Condition | HTTP status | Error code | Message |
+| --- | --- | --- | --- |
+| Malformed or oversized JSON | `400` | `invalid_request` | `请求格式无效` |
+| `room_id` blank after trim | `400` | `invalid_room_id` | `房间标识不能为空` |
+| `member_id` blank after trim | `400` | `invalid_member_id` | `成员标识不能为空` |
+| room row is missing | `404` | `room_not_found` | `房间不存在或已失效` |
+| member row is missing in that room | `404` | `member_not_found` | `成员不在房间中` |
+| room is expired | `410` | `room_expired` | `该房间已过期，请让朋友重新创建` |
+| Non-validation service/store failure | `500` | `internal_error` | `服务器错误` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: handler binds `{member_id}`, calls `LeaveContext` with path `room_id`, maps service sentinels to the standard JSON envelope, and returns `204` on success.
+- Base: leave endpoint only changes product lifecycle state; WebSocket `member.left` and LiveKit participant removal are separate future work.
+- Bad: handler directly updates `members.state`, returns plain text errors, returns a body on `204`, or maps missing members to `500`.
+
+### 6. Tests Required
+
+- Leave-room success HTTP test:
+  - create or seed a room with an active member;
+  - call `POST /v1/rooms/{room_id}/leave`;
+  - assert HTTP `204` and empty body.
+- Context propagation test:
+  - request context value reaches `LeaveContext`.
+- Validation HTTP tests:
+  - malformed body;
+  - oversized body does not call the service;
+  - blank `member_id` returns `invalid_member_id`.
+- Product error HTTP tests:
+  - missing room returns `404 room_not_found`;
+  - missing member returns `404 member_not_found`;
+  - expired room returns `410 room_expired`.
+- Lifecycle integration tests through HTTP:
+  - leave last active member, then join before expiry succeeds and returns cleared expiry fields;
+  - leave last active member, then after expiry join returns `410 room_expired`.
+- Contract check:
+  - `services/api/openapi.yaml` documents `/v1/rooms/{room_id}/leave`, `LeaveRoomRequest`, `204`, `400`, `404`, `410`, `500`, and every returned error code.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+func (h *Handlers) LeaveRoom(c *gin.Context) {
+    memberID := c.PostForm("member_id")
+    if err := h.db.Model(&store.MemberModel{}).Update("state", "disconnected").Error; err != nil {
+        c.String(http.StatusInternalServerError, err.Error())
+        return
+    }
+    c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+```
+
+Why wrong: it bypasses service lifecycle rules, leaks raw errors, ignores JSON/envelope contracts, and returns `200` with a body instead of `204`.
+
+#### Correct
+
+```go
+result, err := h.roomLeaver.LeaveContext(c.Request.Context(), room.LeaveInput{
+    RoomID: c.Param("room_id"),
+    MemberID: request.MemberID,
+})
+if err != nil {
+    writeRoomError(c, err)
+    return
+}
+c.Status(http.StatusNoContent)
+_ = result
+```
+
+Why correct: product rules stay in the room service/repository, while HTTP owns only binding and status/error mapping.
+
+---
+
 ## Common Mistakes
 
 - Do not spread request validation across handler, service, and store; validate product inputs at the service boundary and translate once in HTTP.
 - Do not change user-facing Chinese copy without checking `prd.md`.
 - Do not document an error code in OpenAPI unless the handler can actually return it, and do not return a code from code unless OpenAPI documents it.
 - Do not reject duplicate nicknames in join-room handling; nickname uniqueness is not an MVP invariant.
+- Do not return a JSON body for successful leave-room commands; success is `204 No Content`.

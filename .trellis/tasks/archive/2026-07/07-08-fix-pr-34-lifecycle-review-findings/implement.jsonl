@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Store lifecycle transaction and empty-room expiry contracts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Room service sentinel behavior remains mapped by HTTP handlers."}
+{"file":".trellis/spec/guides/index.md","reason":"AI code-review findings must be verified against actual code and specs."}
+{"file":".trellis/tasks/07-08-fix-pr-34-lifecycle-review-findings/prd.md","reason":"Task requirements and acceptance criteria."}
+{"file":".trellis/tasks/07-08-fix-pr-34-lifecycle-review-findings/design.md","reason":"Lifecycle fix design and invariants."}
+{"file":".trellis/tasks/07-08-fix-pr-34-lifecycle-review-findings/implement.md","reason":"Execution checklist and validation commands."}

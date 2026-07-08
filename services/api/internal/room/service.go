@@ -22,12 +22,15 @@ const (
 	maxRoomMembers      = 10
 	inviteCodeLength    = 6
 	maxInviteAttempts   = 5
+	emptyRoomRetention  = 30 * time.Minute
 	defaultRoomName     = "临时房间"
 )
 
 var (
 	ErrInviteCodeRetriesExhausted = errors.New("invite code retries exhausted")
 	ErrInviteNotFound             = errors.New("invite not found")
+	ErrRoomNotFound               = errors.New("room not found")
+	ErrMemberNotFound             = errors.New("member not found")
 	ErrRoomExpired                = errors.New("room expired")
 	ErrRoomFull                   = errors.New("room full")
 )
@@ -39,7 +42,14 @@ type Repository interface {
 type joinRepository interface {
 	FindRoomByInviteCode(ctx context.Context, inviteCode string) (domain.Room, error)
 	JoinRoomWithMember(ctx context.Context, room domain.Room, member domain.Member, activeStates []domain.MemberState, maxActiveMembers int, joinedAt time.Time) (domain.Room, error)
-	MarkRoomExpired(ctx context.Context, roomID string, updatedAt time.Time) error
+}
+
+type leaveRepository interface {
+	LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.Room, domain.Member, error)
+}
+
+type expiryRepository interface {
+	ExpireEmptyRooms(ctx context.Context, now time.Time, retention time.Duration) (int, error)
 }
 
 type InviteGenerator interface {
@@ -75,6 +85,16 @@ type JoinInput struct {
 }
 
 type JoinResult struct {
+	Room   domain.Room
+	Member domain.Member
+}
+
+type LeaveInput struct {
+	RoomID   string
+	MemberID string
+}
+
+type LeaveResult struct {
 	Room   domain.Room
 	Member domain.Member
 }
@@ -170,19 +190,13 @@ func (s *Service) JoinContext(ctx context.Context, input JoinInput) (JoinResult,
 	if foundRoom.State == domain.RoomStateExpired {
 		return JoinResult{}, ErrRoomExpired
 	}
-	if foundRoom.ExpiresAt != nil && !foundRoom.ExpiresAt.After(now) {
-		if err := repository.MarkRoomExpired(ctx, foundRoom.ID, now); err != nil {
-			return JoinResult{}, err
-		}
-		return JoinResult{}, ErrRoomExpired
-	}
 
 	memberID, err := s.idGenerator("mem")
 	if err != nil {
 		return JoinResult{}, err
 	}
 	member := buildJoinMember(normalized, foundRoom.ID, memberID, now)
-	joinedRoom, err := repository.JoinRoomWithMember(ctx, foundRoom, member, []domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting}, maxRoomMembers, now)
+	joinedRoom, err := repository.JoinRoomWithMember(ctx, foundRoom, member, activeMemberStates(), maxRoomMembers, now)
 	if err != nil {
 		if errors.Is(err, domain.ErrRoomFull) {
 			return JoinResult{}, ErrRoomFull
@@ -190,9 +204,57 @@ func (s *Service) JoinContext(ctx context.Context, input JoinInput) (JoinResult,
 		if errors.Is(err, domain.ErrRoomNotFound) {
 			return JoinResult{}, ErrInviteNotFound
 		}
+		if errors.Is(err, domain.ErrRoomExpired) {
+			return JoinResult{}, ErrRoomExpired
+		}
 		return JoinResult{}, err
 	}
 	return JoinResult{Room: joinedRoom, Member: member}, nil
+}
+
+func (s *Service) Leave(input LeaveInput) (LeaveResult, error) {
+	return s.LeaveContext(context.Background(), input)
+}
+
+func (s *Service) LeaveContext(ctx context.Context, input LeaveInput) (LeaveResult, error) {
+	normalized, err := validateLeaveInput(input)
+	if err != nil {
+		return LeaveResult{}, err
+	}
+	if s == nil || s.repository == nil {
+		return LeaveResult{}, errors.New("room service is not configured")
+	}
+	repository, ok := s.repository.(leaveRepository)
+	if !ok {
+		return LeaveResult{}, errors.New("room repository does not support leaving")
+	}
+
+	leftAt := s.now().UTC()
+	leftRoom, leftMember, err := repository.LeaveRoomMember(ctx, normalized.roomID, normalized.memberID, activeMemberStates(), leftAt, emptyRoomRetention)
+	if err != nil {
+		if errors.Is(err, domain.ErrRoomNotFound) {
+			return LeaveResult{}, ErrRoomNotFound
+		}
+		if errors.Is(err, domain.ErrMemberNotFound) {
+			return LeaveResult{}, ErrMemberNotFound
+		}
+		if errors.Is(err, domain.ErrRoomExpired) {
+			return LeaveResult{}, ErrRoomExpired
+		}
+		return LeaveResult{}, err
+	}
+	return LeaveResult{Room: leftRoom, Member: leftMember}, nil
+}
+
+func (s *Service) ExpireEmptyRoomsContext(ctx context.Context) (int, error) {
+	if s == nil || s.repository == nil {
+		return 0, errors.New("room service is not configured")
+	}
+	repository, ok := s.repository.(expiryRepository)
+	if !ok {
+		return 0, errors.New("room repository does not support empty-room expiry")
+	}
+	return repository.ExpireEmptyRooms(ctx, s.now().UTC(), emptyRoomRetention)
 }
 
 type normalizedCreateInput struct {
@@ -207,6 +269,11 @@ type normalizedJoinInput struct {
 	anonymousID string
 	nickname    string
 	avatarID    string
+}
+
+type normalizedLeaveInput struct {
+	roomID   string
+	memberID string
 }
 
 type normalizedIdentityInput struct {
@@ -253,6 +320,20 @@ func validateJoinInput(input JoinInput) (normalizedJoinInput, error) {
 		nickname:    identity.nickname,
 		avatarID:    identity.avatarID,
 	}, nil
+}
+
+func validateLeaveInput(input LeaveInput) (normalizedLeaveInput, error) {
+	normalized := normalizedLeaveInput{
+		roomID:   strings.TrimSpace(input.RoomID),
+		memberID: strings.TrimSpace(input.MemberID),
+	}
+	if normalized.roomID == "" {
+		return normalized, &ValidationError{Code: "invalid_room_id", Message: "房间标识不能为空"}
+	}
+	if normalized.memberID == "" {
+		return normalized, &ValidationError{Code: "invalid_member_id", Message: "成员标识不能为空"}
+	}
+	return normalized, nil
 }
 
 func validateIdentityInput(anonymousID string, nickname string, avatarID string) (normalizedIdentityInput, error) {
@@ -329,6 +410,10 @@ func buildJoinMember(input normalizedJoinInput, roomID string, memberID string, 
 		JoinedAt:        now,
 		LiveKitIdentity: memberID,
 	}
+}
+
+func activeMemberStates() []domain.MemberState {
+	return []domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting}
 }
 
 func generateID(prefix string) (string, error) {

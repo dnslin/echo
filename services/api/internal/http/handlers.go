@@ -21,13 +21,18 @@ type roomJoiner interface {
 	JoinContext(ctx context.Context, input room.JoinInput) (room.JoinResult, error)
 }
 
+type roomLeaver interface {
+	LeaveContext(ctx context.Context, input room.LeaveInput) (room.LeaveResult, error)
+}
+
 type Handlers struct {
 	roomCreator roomCreator
 	roomJoiner  roomJoiner
+	roomLeaver  roomLeaver
 }
 
-func NewHandlers(roomCreator roomCreator, roomJoiner roomJoiner) *Handlers {
-	return &Handlers{roomCreator: roomCreator, roomJoiner: roomJoiner}
+func NewHandlers(roomCreator roomCreator, roomJoiner roomJoiner, roomLeaver roomLeaver) *Handlers {
+	return &Handlers{roomCreator: roomCreator, roomJoiner: roomJoiner, roomLeaver: roomLeaver}
 }
 
 type createRoomRequest struct {
@@ -42,6 +47,10 @@ type joinRoomRequest struct {
 	AnonymousID string `json:"anonymous_id"`
 	Nickname    string `json:"nickname"`
 	AvatarID    string `json:"avatar_id"`
+}
+
+type leaveRoomRequest struct {
+	MemberID string `json:"member_id"`
 }
 
 type createRoomResponse struct {
@@ -129,6 +138,27 @@ func (h *Handlers) JoinRoom(c *gin.Context) {
 	c.JSON(http.StatusOK, toJoinRoomResponse(result))
 }
 
+func (h *Handlers) LeaveRoom(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxCreateRoomRequestBytes)
+
+	var request leaveRoomRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", "请求格式无效")
+		return
+	}
+
+	_, err := h.roomLeaver.LeaveContext(c.Request.Context(), room.LeaveInput{
+		RoomID:   c.Param("room_id"),
+		MemberID: request.MemberID,
+	})
+	if err != nil {
+		writeRoomError(c, err)
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
 func toCreateRoomResponse(result room.CreateResult) createRoomResponse {
 	return toRoomMemberResponse(result.Room, result.Member)
 }
@@ -173,6 +203,14 @@ func writeRoomError(c *gin.Context, err error) {
 	}
 	if errors.Is(err, room.ErrInviteNotFound) {
 		writeError(c, http.StatusNotFound, "invite_not_found", "邀请码无效，请检查后重试")
+		return
+	}
+	if errors.Is(err, room.ErrRoomNotFound) {
+		writeError(c, http.StatusNotFound, "room_not_found", "房间不存在或已失效")
+		return
+	}
+	if errors.Is(err, room.ErrMemberNotFound) {
+		writeError(c, http.StatusNotFound, "member_not_found", "成员不在房间中")
 		return
 	}
 	if errors.Is(err, room.ErrRoomExpired) {

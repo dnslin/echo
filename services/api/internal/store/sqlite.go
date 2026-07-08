@@ -94,6 +94,17 @@ func findRoomByID(db *gorm.DB, roomID string) (RoomModel, error) {
 	return model, nil
 }
 
+func findMemberByRoomAndID(db *gorm.DB, roomID string, memberID string) (MemberModel, error) {
+	var model MemberModel
+	if err := db.First(&model, "room_id = ? AND id = ?", roomID, memberID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return MemberModel{}, domain.ErrMemberNotFound
+		}
+		return MemberModel{}, err
+	}
+	return model, nil
+}
+
 func countRoomMembersByStates(db *gorm.DB, roomID string, states []domain.MemberState) (int, error) {
 	if len(states) == 0 {
 		return 0, nil
@@ -142,9 +153,25 @@ func (r *Repository) JoinRoomWithMember(ctx context.Context, room domain.Room, m
 		if err != nil {
 			return err
 		}
+		if domain.RoomState(roomModel.State) == domain.RoomStateExpired {
+			return domain.ErrRoomExpired
+		}
 		count, err := countRoomMembersByStates(tx, room.ID, activeStates)
 		if err != nil {
 			return err
+		}
+		if roomModel.ExpiresAt != nil && !roomModel.ExpiresAt.After(joinedAt) && count == 0 {
+			if err := tx.Model(&RoomModel{}).Where("id = ? AND state = ?", room.ID, string(domain.RoomStateActive)).Updates(map[string]any{
+				"state":      string(domain.RoomStateExpired),
+				"updated_at": joinedAt,
+			}).Error; err != nil {
+				return err
+			}
+			if err := conn.Exec("COMMIT").Error; err != nil {
+				return err
+			}
+			committed = true
+			return domain.ErrRoomExpired
 		}
 		if count >= maxActiveMembers {
 			return domain.ErrRoomFull
@@ -178,6 +205,108 @@ func (r *Repository) JoinRoomWithMember(ctx context.Context, room domain.Room, m
 	return joinedRoom, nil
 }
 
+func (r *Repository) LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.Room, domain.Member, error) {
+	if r == nil || r.db == nil {
+		return domain.Room{}, domain.Member{}, errors.New("store repository requires a database")
+	}
+	if len(activeStates) == 0 {
+		return domain.Room{}, domain.Member{}, errors.New("leave requires active member states")
+	}
+
+	var leftRoom domain.Room
+	var leftMember domain.Member
+	err := r.db.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		if err := conn.Exec("BEGIN IMMEDIATE").Error; err != nil {
+			return err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = conn.Exec("ROLLBACK").Error
+			}
+		}()
+
+		tx := conn.Session(&gorm.Session{SkipDefaultTransaction: true})
+		roomModel, err := findRoomByID(tx, roomID)
+		if err != nil {
+			return err
+		}
+		if domain.RoomState(roomModel.State) == domain.RoomStateExpired {
+			return domain.ErrRoomExpired
+		}
+		memberModel, err := findMemberByRoomAndID(tx, roomID, memberID)
+		if err != nil {
+			return err
+		}
+
+		memberState := domain.MemberState(memberModel.State)
+		wasActive := memberStateIn(memberState, activeStates)
+		if !wasActive && roomModel.ExpiresAt != nil && !roomModel.ExpiresAt.After(leftAt) {
+			count, err := countRoomMembersByStates(tx, roomID, activeStates)
+			if err != nil {
+				return err
+			}
+			if count == 0 {
+				if err := tx.Model(&RoomModel{}).Where("id = ? AND state = ?", roomID, string(domain.RoomStateActive)).Updates(map[string]any{
+					"state":      string(domain.RoomStateExpired),
+					"updated_at": leftAt,
+				}).Error; err != nil {
+					return err
+				}
+				if err := conn.Exec("COMMIT").Error; err != nil {
+					return err
+				}
+				committed = true
+				return domain.ErrRoomExpired
+			}
+		}
+		if memberState != domain.MemberStateDisconnected || memberModel.Speaking {
+			updates := map[string]any{
+				"state":    string(domain.MemberStateDisconnected),
+				"speaking": false,
+			}
+			if err := tx.Model(&MemberModel{}).Where("room_id = ? AND id = ?", roomID, memberID).Updates(updates).Error; err != nil {
+				return err
+			}
+			memberModel.State = string(domain.MemberStateDisconnected)
+			memberModel.Speaking = false
+		}
+
+		if wasActive {
+			count, err := countRoomMembersByStates(tx, roomID, activeStates)
+			if err != nil {
+				return err
+			}
+			if count == 0 {
+				expiresAt := leftAt.Add(retention)
+				updates := map[string]any{
+					"last_empty_at": leftAt,
+					"expires_at":    expiresAt,
+					"updated_at":    leftAt,
+				}
+				if err := tx.Model(&RoomModel{}).Where("id = ?", roomID).Updates(updates).Error; err != nil {
+					return err
+				}
+				roomModel.LastEmptyAt = &leftAt
+				roomModel.ExpiresAt = &expiresAt
+				roomModel.UpdatedAt = leftAt
+			}
+		}
+
+		if err := conn.Exec("COMMIT").Error; err != nil {
+			return err
+		}
+		committed = true
+		leftRoom = modelToRoom(roomModel)
+		leftMember = modelToMember(memberModel)
+		return nil
+	})
+	if err != nil {
+		return domain.Room{}, domain.Member{}, err
+	}
+	return leftRoom, leftMember, nil
+}
+
 func (r *Repository) MarkRoomExpired(ctx context.Context, roomID string, updatedAt time.Time) error {
 	if r == nil || r.db == nil {
 		return errors.New("store repository requires a database")
@@ -193,6 +322,64 @@ func (r *Repository) MarkRoomExpired(ctx context.Context, roomID string, updated
 		return domain.ErrRoomNotFound
 	}
 	return nil
+}
+
+func (r *Repository) ExpireEmptyRooms(ctx context.Context, now time.Time, retention time.Duration) (int, error) {
+	if r == nil || r.db == nil {
+		return 0, errors.New("store repository requires a database")
+	}
+
+	expired := 0
+	cutoff := now.Add(-retention)
+	activeStates := activeLifecycleMemberStates()
+	err := r.db.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		if err := conn.Exec("BEGIN IMMEDIATE").Error; err != nil {
+			return err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = conn.Exec("ROLLBACK").Error
+			}
+		}()
+
+		tx := conn.Session(&gorm.Session{SkipDefaultTransaction: true})
+		var rooms []RoomModel
+		if err := tx.Where("state = ?", string(domain.RoomStateActive)).Find(&rooms).Error; err != nil {
+			return err
+		}
+		for _, roomModel := range rooms {
+			activeCount, err := countRoomMembersByStates(tx, roomModel.ID, activeStates)
+			if err != nil {
+				return err
+			}
+			if activeCount != 0 {
+				continue
+			}
+			retainedRoomDue := roomModel.ExpiresAt != nil && !roomModel.ExpiresAt.After(now)
+			oldNoActiveRoomDue := roomModel.ExpiresAt == nil && !roomModel.CreatedAt.After(cutoff)
+			if !retainedRoomDue && !oldNoActiveRoomDue {
+				continue
+			}
+			result := tx.Model(&RoomModel{}).Where("id = ? AND state = ?", roomModel.ID, string(domain.RoomStateActive)).Updates(map[string]any{
+				"state":      string(domain.RoomStateExpired),
+				"updated_at": now,
+			})
+			if result.Error != nil {
+				return result.Error
+			}
+			expired += int(result.RowsAffected)
+		}
+		if err := conn.Exec("COMMIT").Error; err != nil {
+			return err
+		}
+		committed = true
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return expired, nil
 }
 
 func roomToModel(room domain.Room) *RoomModel {
@@ -244,6 +431,36 @@ func memberToModel(member domain.Member) *MemberModel {
 		JoinedAt:        member.JoinedAt,
 		LiveKitIdentity: member.LiveKitIdentity,
 	}
+}
+
+func modelToMember(model MemberModel) domain.Member {
+	return domain.Member{
+		ID:              model.ID,
+		RoomID:          model.RoomID,
+		AnonymousID:     model.AnonymousID,
+		Nickname:        model.Nickname,
+		AvatarID:        model.AvatarID,
+		IsHost:          model.IsHost,
+		State:           domain.MemberState(model.State),
+		Muted:           model.Muted,
+		Speaking:        model.Speaking,
+		VoiceMode:       domain.VoiceMode(model.VoiceMode),
+		JoinedAt:        model.JoinedAt,
+		LiveKitIdentity: model.LiveKitIdentity,
+	}
+}
+
+func memberStateIn(state domain.MemberState, states []domain.MemberState) bool {
+	for _, candidate := range states {
+		if state == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func activeLifecycleMemberStates() []domain.MemberState {
+	return []domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting}
 }
 
 func isInviteCodeConflict(err error) bool {

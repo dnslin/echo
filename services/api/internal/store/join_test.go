@@ -145,6 +145,117 @@ func TestJoinRoomWithMemberClearsRetainedEmptyRoomExpiryFields(t *testing.T) {
 	}
 }
 
+func TestJoinRoomWithMemberExpiresDueRetainedEmptyRoomBeforeInsert(t *testing.T) {
+	db := openTestSQLite(t)
+	repository := NewRepository(db)
+	now := time.Date(2026, 7, 8, 12, 30, 0, 0, time.UTC)
+	createdAt := now.Add(-time.Hour)
+	lastEmptyAt := now.Add(-testEmptyRoomRetention)
+	expiresAt := now
+	room := testRoom("room_join_due_empty", "DUEEMP", createdAt)
+	room.LastEmptyAt = &lastEmptyAt
+	room.ExpiresAt = &expiresAt
+	room.UpdatedAt = lastEmptyAt
+	host := testMember("mem_join_due_empty_host", room.ID, createdAt)
+	host.State = domain.MemberStateDisconnected
+	if err := repository.CreateRoomWithMember(context.Background(), room, host); err != nil {
+		t.Fatalf("CreateRoomWithMember returned error: %v", err)
+	}
+
+	member := joinMember("mem_join_due_empty", room.ID, domain.MemberStateOnline, now)
+	_, err := repository.JoinRoomWithMember(context.Background(), room, member, activeMemberStates(), 10, now)
+	if !errors.Is(err, domain.ErrRoomExpired) {
+		t.Fatalf("JoinRoomWithMember error = %v, want ErrRoomExpired", err)
+	}
+	var persistedCount int64
+	if err := db.Model(&MemberModel{}).Where("id = ?", member.ID).Count(&persistedCount).Error; err != nil {
+		t.Fatalf("count joined member returned error: %v", err)
+	}
+	if persistedCount != 0 {
+		t.Fatalf("persisted joined member count = %d, want 0", persistedCount)
+	}
+	found, err := repository.FindRoomByInviteCode(context.Background(), room.InviteCode)
+	if err != nil {
+		t.Fatalf("FindRoomByInviteCode returned error: %v", err)
+	}
+	if found.State != domain.RoomStateExpired || !found.UpdatedAt.Equal(now) {
+		t.Fatalf("room state/updated_at = %q/%v, want expired/%v", found.State, found.UpdatedAt, now)
+	}
+}
+
+func TestJoinRoomWithMemberRejectsTransactionObservedExpiredRoom(t *testing.T) {
+	db := openTestSQLite(t)
+	repository := NewRepository(db)
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	room := testRoom("room_join_expired", "EXPRJD", now.Add(-time.Hour))
+	room.State = domain.RoomStateExpired
+	host := testMember("mem_join_expired_host", room.ID, room.CreatedAt)
+	host.State = domain.MemberStateDisconnected
+	if err := repository.CreateRoomWithMember(context.Background(), room, host); err != nil {
+		t.Fatalf("CreateRoomWithMember returned error: %v", err)
+	}
+
+	member := joinMember("mem_join_expired", room.ID, domain.MemberStateOnline, now)
+	_, err := repository.JoinRoomWithMember(context.Background(), room, member, activeMemberStates(), 10, now)
+	if !errors.Is(err, domain.ErrRoomExpired) {
+		t.Fatalf("JoinRoomWithMember error = %v, want ErrRoomExpired", err)
+	}
+	var persistedCount int64
+	if err := db.Model(&MemberModel{}).Where("id = ?", member.ID).Count(&persistedCount).Error; err != nil {
+		t.Fatalf("count joined member returned error: %v", err)
+	}
+	if persistedCount != 0 {
+		t.Fatalf("persisted joined member count = %d, want 0", persistedCount)
+	}
+}
+
+func TestJoinRoomWithMemberRecoversDueRetainedRoomWithActiveMember(t *testing.T) {
+	db := openTestSQLite(t)
+	repository := NewRepository(db)
+	now := time.Date(2026, 7, 8, 12, 30, 0, 0, time.UTC)
+	createdAt := now.Add(-time.Hour)
+	lastEmptyAt := now.Add(-testEmptyRoomRetention)
+	expiresAt := now
+	room := testRoom("room_join_due_active", "DUEJON", createdAt)
+	room.LastEmptyAt = &lastEmptyAt
+	room.ExpiresAt = &expiresAt
+	room.UpdatedAt = lastEmptyAt
+	host := testMember("mem_join_due_active_host", room.ID, createdAt)
+	host.State = domain.MemberStateReconnecting
+	if err := repository.CreateRoomWithMember(context.Background(), room, host); err != nil {
+		t.Fatalf("CreateRoomWithMember returned error: %v", err)
+	}
+
+	member := joinMember("mem_join_due_active", room.ID, domain.MemberStateOnline, now)
+	joinedRoom, err := repository.JoinRoomWithMember(context.Background(), room, member, activeMemberStates(), 10, now)
+	if err != nil {
+		t.Fatalf("JoinRoomWithMember returned error: %v", err)
+	}
+	if joinedRoom.State != domain.RoomStateActive || joinedRoom.LastEmptyAt != nil || joinedRoom.ExpiresAt != nil {
+		t.Fatalf("joined room state/empty fields = %q/%v/%v, want active/nil/nil", joinedRoom.State, joinedRoom.LastEmptyAt, joinedRoom.ExpiresAt)
+	}
+	if !joinedRoom.UpdatedAt.Equal(now) {
+		t.Fatalf("joined room UpdatedAt = %v, want %v", joinedRoom.UpdatedAt, now)
+	}
+	found, err := repository.FindRoomByInviteCode(context.Background(), room.InviteCode)
+	if err != nil {
+		t.Fatalf("FindRoomByInviteCode returned error: %v", err)
+	}
+	if found.State != domain.RoomStateActive || found.LastEmptyAt != nil || found.ExpiresAt != nil {
+		t.Fatalf("persisted room state/empty fields = %q/%v/%v, want active/nil/nil", found.State, found.LastEmptyAt, found.ExpiresAt)
+	}
+	if !found.UpdatedAt.Equal(now) {
+		t.Fatalf("persisted room UpdatedAt = %v, want %v", found.UpdatedAt, now)
+	}
+	count, err := repository.CountRoomMembersByStates(context.Background(), room.ID, activeMemberStates())
+	if err != nil {
+		t.Fatalf("CountRoomMembersByStates returned error: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("active member count after due active join = %d, want 2", count)
+	}
+}
+
 func TestJoinRoomWithMemberConcurrentRequestsDoNotExceedCapacity(t *testing.T) {
 	db := openTestSQLite(t)
 	repository := NewRepository(db)
