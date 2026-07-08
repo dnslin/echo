@@ -389,3 +389,36 @@ Implemented backend leave-room lifecycle for Issue #12: leave endpoint, disconne
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Fix PR 34 lifecycle review findings
+
+**Date**: 2026-07-08
+**Task**: Fix PR 34 lifecycle review findings
+**Branch**: `issue-12-leave-room-lifecycle`
+
+### Summary
+
+Fixed PR #34 lifecycle review findings by moving due-retained-room expiry into store transactions, hardening join/leave/cleanup invariants, adding regression tests, and updating backend database spec.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `97a30ad` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

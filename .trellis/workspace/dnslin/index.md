@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-07-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~391 | Active |
+| `journal-1.md` | ~424 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-07-08 | Fix PR 34 lifecycle review findings | `97a30ad` | `issue-12-leave-room-lifecycle` |
 | 11 | 2026-07-08 | Implement issue 12 leave room lifecycle | `ba5a322` | `issue-12-leave-room-lifecycle` |
 | 10 | 2026-07-08 | Fix join-room review findings | `434f884` | `issue-11-join-room-api` |
 | 9 | 2026-07-08 | Issue 11 join room API | `ec1fca0`, `e4b23d3`, `19b22ba` | `issue-11-join-room-api` |
