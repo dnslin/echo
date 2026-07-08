@@ -141,3 +141,38 @@ Implemented Issue #6 workspace bootstrap: Wails Windows desktop scaffold, API he
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Issue 8 Wails LiveKit audio spike
+
+**Date**: 2026-07-08
+**Task**: Issue 8 Wails LiveKit audio spike
+**Branch**: `issue-8-wails-livekit-audio`
+
+### Summary
+
+验证 Wails 3 WebView2 内 LiveKit JS 音频路径：实现隔离 spike、补充自动测试和安全约束、记录 LiveKit Cloud Windows HITL 通过，并同步 frontend code-spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a884da3` | (see git log) |
+| `c47b221` | (see git log) |
+| `276269d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
