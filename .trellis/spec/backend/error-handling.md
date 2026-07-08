@@ -54,19 +54,22 @@ type ValidationError struct {
 
 ### 3. Contracts
 
-- Invalid JSON or binding failure returns HTTP `400` with code `invalid_request` and message `请求格式无效`.
+- Invalid JSON, oversized request bodies, or binding failure returns HTTP `400` with code `invalid_request` and message `请求格式无效`.
+- `POST /v1/rooms` must cap request-body bytes before JSON binding so oversized input is rejected before service creation starts.
 - Service validation errors return HTTP `400` and preserve the service-provided `Code` and `Message` exactly.
 - Unexpected service/store failures return HTTP `500` with code `internal_error` and message `服务器错误`.
 - `POST /v1/rooms` success returns HTTP `201` and must not include LiveKit token, room session token, join-room result, or WebSocket data.
-- OpenAPI must document every public error code exposed by the endpoint.
+- OpenAPI must document every public error code exposed by the endpoint, including `internal_error` in a `500` response.
 
 ### 4. Validation & Error Matrix
 
 | Condition | HTTP status | Error code | Message |
 | --- | --- | --- | --- |
-| Malformed JSON | `400` | `invalid_request` | `请求格式无效` |
+| Malformed or oversized JSON | `400` | `invalid_request` | `请求格式无效` |
 | `anonymous_id` blank after trim | `400` | `invalid_anonymous_id` | `匿名身份不能为空` |
+| `anonymous_id` longer than 128 runes after trim | `400` | `anonymous_id_too_long` | `匿名身份最多 128 个字符` |
 | `avatar_id` blank after trim | `400` | `invalid_avatar_id` | `请选择头像` |
+| `avatar_id` longer than 64 runes after trim | `400` | `avatar_id_too_long` | `头像标识最多 64 个字符` |
 | `nickname` blank after trim | `400` | `invalid_nickname` | `请输入昵称` |
 | `nickname` longer than 16 runes | `400` | `nickname_too_long` | `昵称最多 16 个字符` |
 | `room_name` longer than 24 runes | `400` | `room_name_too_long` | `房间名称最多 24 个字符` |
@@ -89,13 +92,18 @@ type ValidationError struct {
   - room is `active` with nil `last_empty_at` and `expires_at`.
 - Validation HTTP tests:
   - empty `anonymous_id`;
+  - `anonymous_id` over 128 runes;
   - empty `avatar_id`;
+  - `avatar_id` over 64 runes;
   - empty `nickname`;
   - nickname over 16 runes;
   - room name over 24 runes;
+  - oversized request body returns `invalid_request` before room creation starts;
   - each asserts status, error code, and exact Chinese message.
+- Context propagation test:
+  - handler passes `c.Request.Context()` to the room creation service.
 - Contract check:
-  - `services/api/openapi.yaml` documents the endpoint, request body, success response, and 400 error examples.
+  - `services/api/openapi.yaml` documents the endpoint, request body, success response, 400 error examples, and `500 internal_error` response.
 
 ### 7. Wrong vs Correct
 

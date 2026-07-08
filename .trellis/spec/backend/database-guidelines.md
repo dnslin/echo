@@ -57,7 +57,8 @@ members(id, room_id, anonymous_id, nickname, avatar_id, is_host,
 | Condition | Required behavior |
 | --- | --- |
 | SQLite path is blank | Return an error; do not create an in-memory implicit database. |
-| DB open or migration fails | Return the original error to the caller. |
+| DB open fails | Return the original error to the caller. |
+| Migration fails after DB open | Close the opened DB pool, then return the original migration error. |
 | `rooms.invite_code` unique constraint fails during create | Return `domain.ErrInviteCodeConflict` so the room service can retry generation. |
 | Member insert fails after room insert in create transaction | Roll back the room insert and return the error. |
 | Initial created room has no members beyond host | Persist exactly the host member for Issue #10; join path is out of scope. |
@@ -72,7 +73,8 @@ members(id, room_id, anonymous_id, nickname, avatar_id, is_host,
 
 - Store migration test:
   - opens a temp-file SQLite database;
-  - verifies AutoMigrate allows reading/writing `RoomModel` and `MemberModel`.
+  - verifies AutoMigrate allows reading/writing `RoomModel` and `MemberModel`;
+  - verifies or explicitly documents the cleanup path when migration fails after the DB pool opens.
 - Persistence round-trip test:
   - creates a room + host member through `CreateRoomWithMember`;
   - asserts invite code, active state, nil expiry fields, host flag, online state, unmuted, not speaking, and `push_to_talk`.

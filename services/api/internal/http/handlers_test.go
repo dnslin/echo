@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"echo/services/api/internal/domain"
 	"echo/services/api/internal/invite"
 	"echo/services/api/internal/room"
 	"echo/services/api/internal/store"
@@ -83,6 +85,26 @@ func TestCreateRoomValidationErrors(t *testing.T) {
 			wantMessage: "请选择头像",
 		},
 		{
+			name: "anonymous id too long",
+			payload: map[string]string{
+				"anonymous_id": strings.Repeat("a", 129),
+				"nickname":     "Alice",
+				"avatar_id":    "avatar_07",
+			},
+			wantCode:    "anonymous_id_too_long",
+			wantMessage: "匿名身份最多 128 个字符",
+		},
+		{
+			name: "avatar id too long",
+			payload: map[string]string{
+				"anonymous_id": "anon_local_123",
+				"nickname":     "Alice",
+				"avatar_id":    strings.Repeat("a", 65),
+			},
+			wantCode:    "avatar_id_too_long",
+			wantMessage: "头像标识最多 64 个字符",
+		},
+		{
 			name: "empty nickname",
 			payload: map[string]string{
 				"anonymous_id": "anon_local_123",
@@ -133,6 +155,49 @@ func TestCreateRoomValidationErrors(t *testing.T) {
 	}
 }
 
+func TestCreateRoomPassesRequestContext(t *testing.T) {
+	creator := &captureContextRoomCreator{}
+	router := NewRouter(WithRoomCreator(creator))
+	request := httptest.NewRequest(http.MethodPost, "/v1/rooms", strings.NewReader(`{"anonymous_id":"anon_local_123","nickname":"Alice","avatar_id":"avatar_07"}`))
+	request.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(request.Context(), testContextKey{}, "request-context")
+	request = request.WithContext(ctx)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusCreated, response.Body.String())
+	}
+	if creator.contextValue != "request-context" {
+		t.Fatalf("creator context value = %v, want request-context", creator.contextValue)
+	}
+}
+
+func TestCreateRoomRejectsOversizedRequestBeforeCreation(t *testing.T) {
+	creator := &captureContextRoomCreator{}
+	router := NewRouter(WithRoomCreator(creator))
+	request := httptest.NewRequest(http.MethodPost, "/v1/rooms", strings.NewReader(`{"anonymous_id":"anon_local_123","nickname":"`+strings.Repeat("a", maxCreateRoomRequestBytes)+`","avatar_id":"avatar_07"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+	if creator.calls != 0 {
+		t.Fatalf("room creator calls = %d, want 0", creator.calls)
+	}
+	var body errorResponseBody
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("POST /v1/rooms returned invalid error JSON: %v", err)
+	}
+	if body.Error.Code != "invalid_request" || body.Error.Message != "请求格式无效" {
+		t.Fatalf("error response = %s/%s, want invalid_request/请求格式无效", body.Error.Code, body.Error.Message)
+	}
+}
+
 func newCreateRoomTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 	db, err := store.OpenSQLite(filepath.Join(t.TempDir(), "echo.sqlite3"))
@@ -159,6 +224,40 @@ func performJSONRequest(t *testing.T, handler http.Handler, method string, targe
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+type testContextKey struct{}
+
+type captureContextRoomCreator struct {
+	calls        int
+	contextValue any
+}
+
+func (c *captureContextRoomCreator) CreateContext(ctx context.Context, input room.CreateInput) (room.CreateResult, error) {
+	c.calls++
+	c.contextValue = ctx.Value(testContextKey{})
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	return room.CreateResult{
+		Room: domain.Room{
+			ID:         "room_test",
+			Name:       "临时房间",
+			InviteCode: "ABC123",
+			State:      domain.RoomStateActive,
+			CreatedAt:  now,
+		},
+		Member: domain.Member{
+			ID:              "mem_test",
+			RoomID:          "room_test",
+			AnonymousID:     input.AnonymousID,
+			Nickname:        input.Nickname,
+			AvatarID:        input.AvatarID,
+			IsHost:          true,
+			State:           domain.MemberStateOnline,
+			VoiceMode:       domain.VoiceModePushToTalk,
+			LiveKitIdentity: "mem_test",
+			JoinedAt:        now,
+		},
+	}, nil
 }
 
 type createRoomResponseBody struct {

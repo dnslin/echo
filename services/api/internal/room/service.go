@@ -14,11 +14,13 @@ import (
 )
 
 const (
-	maxNicknameRunes  = 16
-	maxRoomNameRunes  = 24
-	inviteCodeLength  = 6
-	maxInviteAttempts = 5
-	defaultRoomName   = "临时房间"
+	maxAnonymousIDRunes = 128
+	maxNicknameRunes    = 16
+	maxAvatarIDRunes    = 64
+	maxRoomNameRunes    = 24
+	inviteCodeLength    = 6
+	maxInviteAttempts   = 5
+	defaultRoomName     = "临时房间"
 )
 
 var ErrInviteCodeRetriesExhausted = errors.New("invite code retries exhausted")
@@ -132,8 +134,14 @@ func validateCreateInput(input CreateInput) (normalizedCreateInput, error) {
 	if normalized.anonymousID == "" {
 		return normalized, &ValidationError{Code: "invalid_anonymous_id", Message: "匿名身份不能为空"}
 	}
+	if utf8.RuneCountInString(normalized.anonymousID) > maxAnonymousIDRunes {
+		return normalized, &ValidationError{Code: "anonymous_id_too_long", Message: "匿名身份最多 128 个字符"}
+	}
 	if normalized.avatarID == "" {
 		return normalized, &ValidationError{Code: "invalid_avatar_id", Message: "请选择头像"}
+	}
+	if utf8.RuneCountInString(normalized.avatarID) > maxAvatarIDRunes {
+		return normalized, &ValidationError{Code: "avatar_id_too_long", Message: "头像标识最多 64 个字符"}
 	}
 	if normalized.nickname == "" {
 		return normalized, &ValidationError{Code: "invalid_nickname", Message: "请输入昵称"}

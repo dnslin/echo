@@ -80,16 +80,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               examples:
+                invalidRequest:
+                  value:
+                    error:
+                      code: invalid_request
+                      message: 请求格式无效
                 invalidAnonymousId:
                   value:
                     error:
                       code: invalid_anonymous_id
                       message: 匿名身份不能为空
+                anonymousIdTooLong:
+                  value:
+                    error:
+                      code: anonymous_id_too_long
+                      message: 匿名身份最多 128 个字符
                 invalidAvatarId:
                   value:
                     error:
                       code: invalid_avatar_id
                       message: 请选择头像
+                avatarIdTooLong:
+                  value:
+                    error:
+                      code: avatar_id_too_long
+                      message: 头像标识最多 64 个字符
                 invalidNickname:
                   value:
                     error:
@@ -105,6 +120,18 @@ paths:
                     error:
                       code: room_name_too_long
                       message: 房间名称最多 24 个字符
+        "500":
+          description: 服务端错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                internalError:
+                  value:
+                    error:
+                      code: internal_error
+                      message: 服务器错误
 components:
   schemas:
     CreateRoomRequest:
@@ -117,7 +144,8 @@ components:
         anonymous_id:
           type: string
           minLength: 1
-          description: 本机匿名身份，非账号。
+          maxLength: 128
+          description: 本机匿名身份，非账号；服务端会裁剪前后空白。
         nickname:
           type: string
           minLength: 1
@@ -126,7 +154,8 @@ components:
         avatar_id:
           type: string
           minLength: 1
-          description: 随机头像标识。
+          maxLength: 64
+          description: 随机头像标识；服务端会裁剪前后空白。
         room_name:
           type: string
           maxLength: 24
@@ -244,10 +273,13 @@ components:
               enum:
                 - invalid_request
                 - invalid_anonymous_id
+                - anonymous_id_too_long
                 - invalid_avatar_id
+                - avatar_id_too_long
                 - invalid_nickname
                 - nickname_too_long
                 - room_name_too_long
+                - internal_error
             message:
               type: string
               description: 用户可理解的中文错误消息。

@@ -92,6 +92,18 @@ func TestCreateValidationErrors(t *testing.T) {
 			wantError: "请选择头像",
 		},
 		{
+			name:      "anonymous id too long",
+			input:     CreateInput{AnonymousID: strings.Repeat("a", 129), Nickname: "Alice", AvatarID: "avatar_07"},
+			wantCode:  "anonymous_id_too_long",
+			wantError: "匿名身份最多 128 个字符",
+		},
+		{
+			name:      "avatar id too long",
+			input:     CreateInput{AnonymousID: "anon_local_123", Nickname: "Alice", AvatarID: strings.Repeat("a", 65)},
+			wantCode:  "avatar_id_too_long",
+			wantError: "头像标识最多 64 个字符",
+		},
+		{
 			name:      "empty nickname",
 			input:     CreateInput{AnonymousID: "anon_local_123", Nickname: "   ", AvatarID: "avatar_07"},
 			wantCode:  "invalid_nickname",

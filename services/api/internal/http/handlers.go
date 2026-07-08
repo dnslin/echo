@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -9,8 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const maxCreateRoomRequestBytes = 4096
+
 type roomCreator interface {
-	Create(input room.CreateInput) (room.CreateResult, error)
+	CreateContext(ctx context.Context, input room.CreateInput) (room.CreateResult, error)
 }
 
 type Handlers struct {
@@ -68,13 +71,15 @@ type apiError struct {
 }
 
 func (h *Handlers) CreateRoom(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxCreateRoomRequestBytes)
+
 	var request createRoomRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "请求格式无效")
 		return
 	}
 
-	result, err := h.roomCreator.Create(room.CreateInput{
+	result, err := h.roomCreator.CreateContext(c.Request.Context(), room.CreateInput{
 		AnonymousID: request.AnonymousID,
 		Nickname:    request.Nickname,
 		AvatarID:    request.AvatarID,

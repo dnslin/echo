@@ -20,9 +20,17 @@ func OpenSQLite(path string) (*gorm.DB, error) {
 		return nil, err
 	}
 	if err := db.AutoMigrate(&RoomModel{}, &MemberModel{}); err != nil {
+		closeDB(db)
 		return nil, err
 	}
 	return db, nil
+}
+
+func closeDB(db *gorm.DB) {
+	sqlDB, err := db.DB()
+	if err == nil {
+		_ = sqlDB.Close()
+	}
 }
 
 type Repository struct {
