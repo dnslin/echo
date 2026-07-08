@@ -80,6 +80,21 @@ func (r *Repository) CountRoomMembersByStates(ctx context.Context, roomID string
 	if r == nil || r.db == nil {
 		return 0, errors.New("store repository requires a database")
 	}
+	return countRoomMembersByStates(r.db.WithContext(ctx), roomID, states)
+}
+
+func findRoomByID(db *gorm.DB, roomID string) (RoomModel, error) {
+	var model RoomModel
+	if err := db.First(&model, "id = ?", roomID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return RoomModel{}, domain.ErrRoomNotFound
+		}
+		return RoomModel{}, err
+	}
+	return model, nil
+}
+
+func countRoomMembersByStates(db *gorm.DB, roomID string, states []domain.MemberState) (int, error) {
 	if len(states) == 0 {
 		return 0, nil
 	}
@@ -89,7 +104,7 @@ func (r *Repository) CountRoomMembersByStates(ctx context.Context, roomID string
 		stateValues = append(stateValues, string(state))
 	}
 	var count int64
-	if err := r.db.WithContext(ctx).Model(&MemberModel{}).Where("room_id = ? AND state IN ?", roomID, stateValues).Count(&count).Error; err != nil {
+	if err := db.Model(&MemberModel{}).Where("room_id = ? AND state IN ?", roomID, stateValues).Count(&count).Error; err != nil {
 		return 0, err
 	}
 	return int(count), nil
@@ -100,6 +115,67 @@ func (r *Repository) CreateMember(ctx context.Context, member domain.Member) err
 		return errors.New("store repository requires a database")
 	}
 	return r.db.WithContext(ctx).Create(memberToModel(member)).Error
+}
+
+func (r *Repository) JoinRoomWithMember(ctx context.Context, room domain.Room, member domain.Member, activeStates []domain.MemberState, maxActiveMembers int, joinedAt time.Time) (domain.Room, error) {
+	if r == nil || r.db == nil {
+		return domain.Room{}, errors.New("store repository requires a database")
+	}
+	if len(activeStates) == 0 {
+		return domain.Room{}, errors.New("join requires active member states")
+	}
+
+	var joinedRoom domain.Room
+	err := r.db.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		if err := conn.Exec("BEGIN IMMEDIATE").Error; err != nil {
+			return err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = conn.Exec("ROLLBACK").Error
+			}
+		}()
+
+		tx := conn.Session(&gorm.Session{SkipDefaultTransaction: true})
+		roomModel, err := findRoomByID(tx, room.ID)
+		if err != nil {
+			return err
+		}
+		count, err := countRoomMembersByStates(tx, room.ID, activeStates)
+		if err != nil {
+			return err
+		}
+		if count >= maxActiveMembers {
+			return domain.ErrRoomFull
+		}
+		if err := tx.Create(memberToModel(member)).Error; err != nil {
+			return err
+		}
+		if roomModel.LastEmptyAt != nil || roomModel.ExpiresAt != nil {
+			updates := map[string]any{
+				"last_empty_at": nil,
+				"expires_at":    nil,
+				"updated_at":    joinedAt,
+			}
+			if err := tx.Model(&RoomModel{}).Where("id = ?", room.ID).Updates(updates).Error; err != nil {
+				return err
+			}
+			roomModel.LastEmptyAt = nil
+			roomModel.ExpiresAt = nil
+			roomModel.UpdatedAt = joinedAt
+		}
+		if err := conn.Exec("COMMIT").Error; err != nil {
+			return err
+		}
+		committed = true
+		joinedRoom = modelToRoom(roomModel)
+		return nil
+	})
+	if err != nil {
+		return domain.Room{}, err
+	}
+	return joinedRoom, nil
 }
 
 func (r *Repository) MarkRoomExpired(ctx context.Context, roomID string, updatedAt time.Time) error {

@@ -8,6 +8,7 @@ import (
 var (
 	ErrInviteCodeConflict = errors.New("invite code conflict")
 	ErrRoomNotFound       = errors.New("room not found")
+	ErrRoomFull           = errors.New("room full")
 )
 
 type RoomState string

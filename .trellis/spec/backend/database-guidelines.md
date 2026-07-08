@@ -126,7 +126,7 @@ Why correct: the transaction keeps room/member persistence atomic and the sentin
 ### 1. Scope / Trigger
 
 - Trigger: adding or modifying repository methods used by `POST /v1/rooms/join` or other invite-code join flows.
-- Applies to persisted room lookup, member capacity counting, new member insertion, and marking rooms expired when `expires_at <= now`.
+- Applies to persisted room lookup, member capacity counting, atomic member insertion, retained-empty-room recovery, and marking rooms expired when `expires_at <= now`.
 - Echo MVP still stores product room lifecycle and current member rows in SQLite; LiveKit must not become the authority for invite validity, expiry, or product capacity.
 
 ### 2. Signatures
@@ -135,6 +135,7 @@ Why correct: the transaction keeps room/member persistence atomic and the sentin
 func (r *Repository) FindRoomByInviteCode(ctx context.Context, inviteCode string) (domain.Room, error)
 func (r *Repository) CountRoomMembersByStates(ctx context.Context, roomID string, states []domain.MemberState) (int, error)
 func (r *Repository) CreateMember(ctx context.Context, member domain.Member) error
+func (r *Repository) JoinRoomWithMember(ctx context.Context, room domain.Room, member domain.Member, activeStates []domain.MemberState, maxActiveMembers int, joinedAt time.Time) (domain.Room, error)
 func (r *Repository) MarkRoomExpired(ctx context.Context, roomID string, updatedAt time.Time) error
 ```
 
@@ -152,9 +153,12 @@ const (
 
 - `FindRoomByInviteCode` receives an already-normalized invite code and queries `rooms.invite_code`; it must not normalize or validate presentation input.
 - Missing room rows must be translated to `domain.ErrRoomNotFound` at the repository boundary.
-- `CountRoomMembersByStates` counts only the caller-provided states; join-room capacity must call it with `online` and `reconnecting`.
+- `CountRoomMembersByStates` counts only the caller-provided states; join-room capacity uses `online` and `reconnecting`.
 - `disconnected` members do not count toward the MVP room capacity limit.
 - `CreateMember` inserts exactly one member row and must preserve the service-provided `is_host`, voice state, and `livekit_identity` fields.
+- `JoinRoomWithMember` owns the successful join mutation: capacity count, over-capacity rejection, member insert, retained-empty-room recovery, and returned room snapshot must happen in one SQLite transaction.
+- `JoinRoomWithMember` must reject capacity with `domain.ErrRoomFull` when the transaction observes `maxActiveMembers` or more members in the provided active states.
+- `JoinRoomWithMember` must clear `rooms.last_empty_at` and `rooms.expires_at`, and set `rooms.updated_at` to `joinedAt`, when a join succeeds for a retained empty room whose expiry fields are still present.
 - `MarkRoomExpired` updates `rooms.state` to `expired` and refreshes `updated_at`; if no row matches, return `domain.ErrRoomNotFound`.
 - Repository methods should accept `context.Context` from the service/handler chain.
 
@@ -166,15 +170,18 @@ const (
 | invite code has no matching room | Return `domain.ErrRoomNotFound`. |
 | `states` argument to count is empty | Return `0, nil`; do not generate invalid SQL. |
 | DB count fails | Return the DB error to the service. |
+| atomic join observes `maxActiveMembers` active members | Return `domain.ErrRoomFull`; do not insert the new member. |
+| atomic join member insert fails | Roll back the join transaction and return the DB error to the service. |
+| atomic join succeeds for retained empty room | Insert the member, clear `last_empty_at` / `expires_at`, update `updated_at`, and return the recovered room snapshot. |
 | member insert fails | Return the DB error to the service. |
 | expire update matches no room | Return `domain.ErrRoomNotFound`. |
 | expire update succeeds | Room state becomes `expired`; `updated_at` is set to the provided timestamp. |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: service normalizes invite code, repository finds the room by canonical code, service checks expiry/capacity, then repository inserts a non-host online member.
+- Good: service normalizes invite code and checks expired-room state, then repository atomically decides capacity, inserts the non-host online member, and recovers retained-empty-room lifecycle fields.
 - Base: repository methods map between GORM models and `domain.Room` / `domain.Member` without applying product copy or HTTP status rules.
-- Bad: handler or service depends on raw `gorm.ErrRecordNotFound`, counts every historical member row as active capacity, or asks LiveKit how many product members are allowed.
+- Bad: handler or service depends on raw `gorm.ErrRecordNotFound`, counts every historical member row as active capacity, performs capacity count and member insert as separate successful-join calls, or asks LiveKit how many product members are allowed.
 
 ### 6. Tests Required
 
@@ -187,6 +194,9 @@ const (
   - returns zero for empty state list.
 - Member insertion test:
   - `CreateMember` persists a non-host joined member with `online`, unmuted, not speaking, `push_to_talk`, and `livekit_identity == member.ID`.
+- Atomic join tests:
+  - `JoinRoomWithMember` clears retained-empty-room `last_empty_at` / `expires_at`, updates `updated_at`, and returns the recovered room snapshot;
+  - concurrent `JoinRoomWithMember` calls against a room with 9 active members persist no more than 10 active members and return `domain.ErrRoomFull` for the over-capacity caller.
 - Expiry update test:
   - `MarkRoomExpired` changes state and `updated_at`;
   - missing room returns `domain.ErrRoomNotFound`.
@@ -201,18 +211,6 @@ go test -count=1 ./services/api/...
 #### Wrong
 
 ```go
-var count int64
-db.Model(&store.MemberModel{}).Where("room_id = ?", roomID).Count(&count)
-if count >= 10 {
-    return room.ErrRoomFull
-}
-```
-
-Why wrong: it counts disconnected historical members and can reject valid joins.
-
-#### Correct
-
-```go
 count, err := repository.CountRoomMembersByStates(ctx, roomID, []domain.MemberState{
     domain.MemberStateOnline,
     domain.MemberStateReconnecting,
@@ -223,9 +221,24 @@ if err != nil {
 if count >= maxRoomMembers {
     return JoinResult{}, ErrRoomFull
 }
+return repository.CreateMember(ctx, member)
 ```
 
-Why correct: capacity follows the product invariant: online and reconnecting members occupy slots; disconnected members do not.
+Why wrong: the capacity decision and member insert are separate calls, so concurrent joins can both observe the same stale count and exceed the 10-member limit.
+
+#### Correct
+
+```go
+joinedRoom, err := repository.JoinRoomWithMember(ctx, room, member, []domain.MemberState{
+    domain.MemberStateOnline,
+    domain.MemberStateReconnecting,
+}, maxRoomMembers, joinedAt)
+if errors.Is(err, domain.ErrRoomFull) {
+    return JoinResult{}, ErrRoomFull
+}
+```
+
+Why correct: the repository owns one SQLite transaction for capacity count, member insert, retained-empty-room recovery, and the returned room snapshot.
 
 ---
 

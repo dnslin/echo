@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -67,6 +68,34 @@ func TestJoinAllowsDuplicateNickname(t *testing.T) {
 	}
 	if len(repository.createdMembers) != 1 || repository.createdMembers[0].Nickname != "Alice" {
 		t.Fatalf("created members = %#v, want one duplicate-nickname member", repository.createdMembers)
+	}
+}
+
+func TestJoinRetainedEmptyRoomClearsExpiryFields(t *testing.T) {
+	lastEmptyAt := fixedNow.Add(-10 * time.Minute)
+	expiresAt := fixedNow.Add(20 * time.Minute)
+	retainedRoom := joinTestRoom("room_retained", "KEEP30", domain.RoomStateActive, &expiresAt)
+	retainedRoom.LastEmptyAt = &lastEmptyAt
+	retainedRoom.UpdatedAt = lastEmptyAt
+	repository := newJoinFakeRepository(retainedRoom)
+	service := newTestService(repository, &fakeInviteGenerator{})
+
+	result, err := service.Join(JoinInput{InviteCode: "KEEP30", AnonymousID: "anon_local_456", Nickname: "Alice", AvatarID: "avatar_08"})
+	if err != nil {
+		t.Fatalf("Join retained room returned error: %v", err)
+	}
+	if result.Room.LastEmptyAt != nil || result.Room.ExpiresAt != nil {
+		t.Fatalf("result room empty/expiry fields = %v/%v, want nil/nil", result.Room.LastEmptyAt, result.Room.ExpiresAt)
+	}
+	if !result.Room.UpdatedAt.Equal(fixedNow) {
+		t.Fatalf("result room UpdatedAt = %v, want %v", result.Room.UpdatedAt, fixedNow)
+	}
+
+	repository.mu.Lock()
+	storedRoom := repository.roomsByInvite["KEEP30"]
+	repository.mu.Unlock()
+	if storedRoom.LastEmptyAt != nil || storedRoom.ExpiresAt != nil {
+		t.Fatalf("stored room empty/expiry fields = %v/%v, want nil/nil", storedRoom.LastEmptyAt, storedRoom.ExpiresAt)
 	}
 }
 
@@ -199,6 +228,49 @@ func TestJoinRejectsFullRoom(t *testing.T) {
 	}
 }
 
+func TestJoinConcurrentRequestsDoNotExceedCapacity(t *testing.T) {
+	repository := newJoinFakeRepository(joinTestRoom("room_concurrent", "RACE10", domain.RoomStateActive, nil))
+	repository.memberCount = maxRoomMembers - 1
+	repository.capacityBarrierTotal = 2
+	repository.capacityBarrierReady = make(chan struct{})
+	repository.capacityBarrierRelease = make(chan struct{})
+	service := newTestService(repository, &fakeInviteGenerator{})
+
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			_, errs[index] = service.Join(JoinInput{InviteCode: "RACE10", AnonymousID: "anon_local_456", Nickname: "Alice", AvatarID: "avatar_08"})
+		}(i)
+	}
+
+	<-repository.capacityBarrierReady
+	close(repository.capacityBarrierRelease)
+	wg.Wait()
+
+	successes := 0
+	fullErrors := 0
+	for _, err := range errs {
+		if err == nil {
+			successes++
+			continue
+		}
+		if errors.Is(err, ErrRoomFull) {
+			fullErrors++
+			continue
+		}
+		t.Fatalf("Join error = %v, want nil or ErrRoomFull", err)
+	}
+	if successes != 1 || fullErrors != 1 {
+		t.Fatalf("join results = %d successes/%d full errors, want 1/1; errs=%#v", successes, fullErrors, errs)
+	}
+	if len(repository.createdMembers) != 1 {
+		t.Fatalf("created members = %d, want 1", len(repository.createdMembers))
+	}
+}
+
 func assertCapacityStates(t *testing.T, states []domain.MemberState) {
 	t.Helper()
 	if len(states) != 2 || states[0] != domain.MemberStateOnline || states[1] != domain.MemberStateReconnecting {
@@ -223,18 +295,23 @@ func joinTestRoom(id string, inviteCode string, state domain.RoomState, expiresA
 }
 
 type joinFakeRepository struct {
-	roomsByInvite       map[string]domain.Room
-	findErr             error
-	memberCount         int
-	countErr            error
-	createMemberErr     error
-	markRoomExpiredErr  error
-	findInviteCodes     []string
-	countedStates       []domain.MemberState
-	createdMembers      []domain.Member
-	markedExpiredRooms  []string
-	markedExpiredTimes  []time.Time
-	createdRoomWithHost []createCall
+	mu                     sync.Mutex
+	roomsByInvite          map[string]domain.Room
+	findErr                error
+	memberCount            int
+	countErr               error
+	createMemberErr        error
+	markRoomExpiredErr     error
+	findInviteCodes        []string
+	countedStates          []domain.MemberState
+	createdMembers         []domain.Member
+	markedExpiredRooms     []string
+	markedExpiredTimes     []time.Time
+	createdRoomWithHost    []createCall
+	capacityBarrierTotal   int
+	capacityBarrierSeen    int
+	capacityBarrierReady   chan struct{}
+	capacityBarrierRelease chan struct{}
 }
 
 func newJoinFakeRepository(room domain.Room) *joinFakeRepository {
@@ -242,11 +319,15 @@ func newJoinFakeRepository(room domain.Room) *joinFakeRepository {
 }
 
 func (f *joinFakeRepository) CreateRoomWithMember(_ context.Context, room domain.Room, member domain.Member) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.createdRoomWithHost = append(f.createdRoomWithHost, createCall{room: room, member: member})
 	return nil
 }
 
 func (f *joinFakeRepository) FindRoomByInviteCode(_ context.Context, inviteCode string) (domain.Room, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.findInviteCodes = append(f.findInviteCodes, inviteCode)
 	if f.findErr != nil {
 		return domain.Room{}, f.findErr
@@ -259,22 +340,76 @@ func (f *joinFakeRepository) FindRoomByInviteCode(_ context.Context, inviteCode 
 }
 
 func (f *joinFakeRepository) CountRoomMembersByStates(_ context.Context, _ string, states []domain.MemberState) (int, error) {
+	f.mu.Lock()
 	f.countedStates = append([]domain.MemberState(nil), states...)
 	if f.countErr != nil {
+		f.mu.Unlock()
 		return 0, f.countErr
 	}
-	return f.memberCount, nil
+	count := f.memberCount
+	f.mu.Unlock()
+
+	f.waitAtCapacityBarrier()
+	return count, nil
 }
 
 func (f *joinFakeRepository) CreateMember(_ context.Context, member domain.Member) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.createMemberErr != nil {
 		return f.createMemberErr
 	}
 	f.createdMembers = append(f.createdMembers, member)
+	if member.State == domain.MemberStateOnline || member.State == domain.MemberStateReconnecting {
+		f.memberCount++
+	}
 	return nil
 }
 
+func (f *joinFakeRepository) JoinRoomWithMember(_ context.Context, room domain.Room, member domain.Member, activeStates []domain.MemberState, maxActiveMembers int, joinedAt time.Time) (domain.Room, error) {
+	f.waitAtCapacityBarrier()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.countedStates = append([]domain.MemberState(nil), activeStates...)
+	if f.createMemberErr != nil {
+		return domain.Room{}, f.createMemberErr
+	}
+	if f.memberCount >= maxActiveMembers {
+		return domain.Room{}, domain.ErrRoomFull
+	}
+	f.createdMembers = append(f.createdMembers, member)
+	if member.State == domain.MemberStateOnline || member.State == domain.MemberStateReconnecting {
+		f.memberCount++
+	}
+	if room.LastEmptyAt != nil || room.ExpiresAt != nil {
+		room.LastEmptyAt = nil
+		room.ExpiresAt = nil
+		room.UpdatedAt = joinedAt
+	}
+	f.roomsByInvite[room.InviteCode] = room
+	return room, nil
+}
+
+func (f *joinFakeRepository) waitAtCapacityBarrier() {
+	if f.capacityBarrierTotal == 0 {
+		return
+	}
+
+	f.mu.Lock()
+	f.capacityBarrierSeen++
+	if f.capacityBarrierSeen == f.capacityBarrierTotal {
+		close(f.capacityBarrierReady)
+	}
+	release := f.capacityBarrierRelease
+	f.mu.Unlock()
+
+	<-release
+}
+
 func (f *joinFakeRepository) MarkRoomExpired(_ context.Context, roomID string, updatedAt time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.markRoomExpiredErr != nil {
 		return f.markRoomExpiredErr
 	}

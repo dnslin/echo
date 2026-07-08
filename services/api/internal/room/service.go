@@ -38,8 +38,7 @@ type Repository interface {
 
 type joinRepository interface {
 	FindRoomByInviteCode(ctx context.Context, inviteCode string) (domain.Room, error)
-	CountRoomMembersByStates(ctx context.Context, roomID string, states []domain.MemberState) (int, error)
-	CreateMember(ctx context.Context, member domain.Member) error
+	JoinRoomWithMember(ctx context.Context, room domain.Room, member domain.Member, activeStates []domain.MemberState, maxActiveMembers int, joinedAt time.Time) (domain.Room, error)
 	MarkRoomExpired(ctx context.Context, roomID string, updatedAt time.Time) error
 }
 
@@ -178,23 +177,22 @@ func (s *Service) JoinContext(ctx context.Context, input JoinInput) (JoinResult,
 		return JoinResult{}, ErrRoomExpired
 	}
 
-	memberCount, err := repository.CountRoomMembersByStates(ctx, foundRoom.ID, []domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting})
-	if err != nil {
-		return JoinResult{}, err
-	}
-	if memberCount >= maxRoomMembers {
-		return JoinResult{}, ErrRoomFull
-	}
-
 	memberID, err := s.idGenerator("mem")
 	if err != nil {
 		return JoinResult{}, err
 	}
 	member := buildJoinMember(normalized, foundRoom.ID, memberID, now)
-	if err := repository.CreateMember(ctx, member); err != nil {
+	joinedRoom, err := repository.JoinRoomWithMember(ctx, foundRoom, member, []domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting}, maxRoomMembers, now)
+	if err != nil {
+		if errors.Is(err, domain.ErrRoomFull) {
+			return JoinResult{}, ErrRoomFull
+		}
+		if errors.Is(err, domain.ErrRoomNotFound) {
+			return JoinResult{}, ErrInviteNotFound
+		}
 		return JoinResult{}, err
 	}
-	return JoinResult{Room: foundRoom, Member: member}, nil
+	return JoinResult{Room: joinedRoom, Member: member}, nil
 }
 
 type normalizedCreateInput struct {
