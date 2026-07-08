@@ -9,6 +9,7 @@ import (
 type routerConfig struct {
 	roomCreator roomCreator
 	roomJoiner  roomJoiner
+	roomLeaver  roomLeaver
 }
 
 type RouterOption func(*routerConfig)
@@ -25,6 +26,12 @@ func WithRoomJoiner(roomJoiner roomJoiner) RouterOption {
 	}
 }
 
+func WithRoomLeaver(roomLeaver roomLeaver) RouterOption {
+	return func(config *routerConfig) {
+		config.roomLeaver = roomLeaver
+	}
+}
+
 func NewRouter(options ...RouterOption) *gin.Engine {
 	config := routerConfig{}
 	for _, option := range options {
@@ -36,14 +43,17 @@ func NewRouter(options ...RouterOption) *gin.Engine {
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-	if config.roomCreator != nil || config.roomJoiner != nil {
-		handlers := NewHandlers(config.roomCreator, config.roomJoiner)
+	if config.roomCreator != nil || config.roomJoiner != nil || config.roomLeaver != nil {
+		handlers := NewHandlers(config.roomCreator, config.roomJoiner, config.roomLeaver)
 		v1 := router.Group("/v1")
 		if config.roomCreator != nil {
 			v1.POST("/rooms", handlers.CreateRoom)
 		}
 		if config.roomJoiner != nil {
 			v1.POST("/rooms/join", handlers.JoinRoom)
+		}
+		if config.roomLeaver != nil {
+			v1.POST("/rooms/:room_id/leave", handlers.LeaveRoom)
 		}
 	}
 	return router

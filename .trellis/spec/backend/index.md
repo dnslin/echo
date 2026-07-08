@@ -16,8 +16,8 @@ This directory contains executable backend contracts for the echo API service. F
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | Active: API module/workspace bootstrap |
 | [Invite Guidelines](./invite-guidelines.md) | Invite-code generation and normalization contracts | Active: create/join room invite codes |
-| [Database Guidelines](./database-guidelines.md) | GORM/SQLite persistence contracts and room/member repository rules | Active: API SQLite persistence |
-| [Error Handling](./error-handling.md) | HTTP validation error envelope and create/join-room error mapping | Active: room HTTP validation |
+| [Database Guidelines](./database-guidelines.md) | GORM/SQLite persistence contracts and room/member repository rules | Active: API SQLite persistence, join, leave, and empty-room lifecycle |
+| [Error Handling](./error-handling.md) | HTTP validation error envelope and create/join/leave-room error mapping | Active: room HTTP validation |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 

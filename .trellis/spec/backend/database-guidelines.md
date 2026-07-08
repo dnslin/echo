@@ -242,9 +242,142 @@ Why correct: the repository owns one SQLite transaction for capacity count, memb
 
 ---
 
+## Scenario: Leave-room lifecycle and empty-room expiry
+
+### 1. Scope / Trigger
+
+- Trigger: adding or modifying repository methods used by `POST /v1/rooms/{room_id}/leave`, empty-room retention, or lifecycle cleanup.
+- Applies to persisted member leave mutations, room empty-retention fields, deterministic expiry cleanup, and tests that assert room lifecycle after members leave.
+- Echo MVP persists room lifecycle and member rows in SQLite. A member leaving changes durable member state; it must not delete the member row or ask LiveKit to decide product-room validity.
+
+### 2. Signatures
+
+```go
+func (r *Repository) LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.Room, domain.Member, error)
+func (r *Repository) ExpireEmptyRooms(ctx context.Context, now time.Time, retention time.Duration) (int, error)
+```
+
+Relevant domain sentinels:
+
+```go
+var (
+    ErrRoomNotFound   = errors.New("room not found")
+    ErrMemberNotFound = errors.New("member not found")
+    ErrRoomExpired    = errors.New("room expired")
+)
+```
+
+Relevant durable states:
+
+```go
+[]domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting}
+// count as active
+
+domain.MemberStateDisconnected
+// does not count as active
+```
+
+### 3. Contracts
+
+- `LeaveRoomMember` must run the room/member mutation in one SQLite transaction.
+- Use the same immediate-write transaction shape as atomic join (`BEGIN IMMEDIATE`) so the active-member count and room retention update observe one durable state.
+- Leaving a member must keep the `members` row and update it to:
+  - `state = disconnected`;
+  - `speaking = false`.
+- Leaving must start empty-room retention only if the leaving member was active and no active members remain after the update.
+- Last-active-member leave must set:
+  - `rooms.last_empty_at = leftAt`;
+  - `rooms.expires_at = leftAt + retention`;
+  - `rooms.updated_at = leftAt`;
+  - `rooms.state` remains `active` until expiry.
+- Non-last-member leave must not set or refresh `last_empty_at` / `expires_at`.
+- Repeated leave for an already-disconnected member is idempotent and must not extend an existing expiry window.
+- Missing room rows return `domain.ErrRoomNotFound`; missing member rows return `domain.ErrMemberNotFound`; expired rooms return `domain.ErrRoomExpired`.
+- `ExpireEmptyRooms` marks active rooms expired only when they have zero active members and either:
+  - `expires_at IS NOT NULL AND expires_at <= now`; or
+  - defensive compatibility case: `expires_at IS NULL`, `created_at <= now - retention`, and no active members exist.
+- `ExpireEmptyRooms` must not expire a room that still has any `online` or `reconnecting` member, even if `expires_at <= now`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required repository behavior |
+| --- | --- |
+| repository or DB is nil | Return an error; do not panic. |
+| `activeStates` is empty for leave | Return an error; do not run a partial mutation. |
+| room ID has no row | Return `domain.ErrRoomNotFound`. |
+| room state is `expired` | Return `domain.ErrRoomExpired`; do not modify member rows. |
+| member ID has no row in that room | Return `domain.ErrMemberNotFound`. |
+| leaving active member while other active members remain | Mark member disconnected/speaking false; leave room retention fields unchanged. |
+| leaving last active member | Mark member disconnected/speaking false; set `last_empty_at` and `expires_at`. |
+| repeated leave of disconnected member | Return success; do not refresh `last_empty_at` or `expires_at`. |
+| due retained room has active member | Do not expire it. |
+| due retained room has no active members | Mark room `expired`, update `updated_at`. |
+| old active room has no active members and no expiry metadata | Mark room `expired` in cleanup. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `LeaveRoomMember` marks the member disconnected, counts remaining `online` / `reconnecting` members inside the same transaction, and starts `expires_at = leftAt + 30m` only for the last active member.
+- Base: `ExpireEmptyRooms` is deterministic and receives `now` from the service; tests do not sleep.
+- Bad: deleting member rows on leave, refreshing expiry on every retry, expiring a room that still has a reconnecting member, or using LiveKit participant presence as the source of truth for product lifecycle.
+
+### 6. Tests Required
+
+- Leave mutation tests:
+  - leaving an online member sets `disconnected` and clears `speaking`;
+  - active count excludes the left member;
+  - non-last leave does not set room expiry fields;
+  - last leave sets exact `last_empty_at`, `expires_at`, and `updated_at` using a fixed clock;
+  - repeated leave does not extend retention;
+  - missing room/member and expired-room cases return the stable domain sentinels.
+- Expiry cleanup tests:
+  - retained empty room with `expires_at <= now` becomes `expired`;
+  - retained room with an `online` or `reconnecting` member is not expired;
+  - old active room with no active members and no expiry metadata is expired;
+  - normal active room with an active host/member is not expired.
+- Full backend check:
+
+```bash
+go test -count=1 ./services/api/...
+```
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+if err := db.Delete(&MemberModel{}, "id = ?", memberID).Error; err != nil {
+    return err
+}
+count, _ := repository.CountRoomMembersByStates(ctx, roomID, activeStates)
+if count == 0 {
+    db.Model(&RoomModel{}).Update("expires_at", time.Now().Add(30*time.Minute))
+}
+```
+
+Why wrong: deleting the row loses member lifecycle facts, the count/update are outside one durable decision point, and `time.Now()` makes tests nondeterministic.
+
+#### Correct
+
+```go
+leftRoom, leftMember, err := repository.LeaveRoomMember(
+    ctx,
+    roomID,
+    memberID,
+    []domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting},
+    leftAt,
+    30*time.Minute,
+)
+```
+
+Why correct: the repository owns one SQLite transaction for member state, active count, and room retention fields; the service supplies a controlled time value.
+
+---
+
 ## Common Mistakes
 
 - Do not switch to `gorm.io/driver/sqlite` without verifying CGO behavior in this repository; current automated checks run with `CGO_ENABLED=0`.
 - Do not add durable presence, reconnect, or speaking tables as part of create-room work; those are separate runtime-state concerns.
 - Do not depend on raw SQLite error strings outside the store layer; translate invite collisions once at the persistence boundary.
 - Do not count `disconnected` member rows toward join-room capacity.
+- Do not refresh `last_empty_at` / `expires_at` on repeated leave; a retrying client must not extend room lifetime.
+- Do not expire retained rooms that still have `online` or `reconnecting` members.
