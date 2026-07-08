@@ -425,3 +425,150 @@ if (track.kind === Track.Kind.Audio) {
 ```
 
 Why correct: it validates only the audio media path, keeps remote playback inside the spike UI, and avoids unnecessary camera permission or token exposure.
+
+---
+
+## Scenario: Desktop push-to-talk keyboard spike
+
+### 1. Scope / Trigger
+
+- Trigger: validating or extending `apps/desktop/**` behavior that touches push-to-talk keyboard press/release events, Windows foreground-game compatibility, Wails custom events, or keyboard HITL records.
+- Applies to `apps/desktop/internal/keyboard/**`, `apps/desktop/main.go`, `apps/desktop/frontend/src/spike/KeyboardSpike.tsx`, `apps/desktop/frontend/src/spike/keyboardState.ts`, their tests, and `docs/spikes/push-to-talk-keyboard.md`.
+- This is a code-spec because Windows hook lifecycle, native-to-frontend event payloads, repeat suppression, and HITL pass/fail records are executable contracts.
+
+### 2. Signatures
+
+- Shared Go event contract:
+
+```go
+const EventName = "keyboard:push-to-talk"
+const NativeSource = "native"
+
+type Event struct {
+    Key     string `json:"key"`
+    Pressed bool   `json:"pressed"`
+    Source  string `json:"source"`
+}
+
+func NewHook(targetKey string, onEvent func(Event)) *Hook
+func (h *Hook) Start() error
+func (h *Hook) Stop()
+```
+
+- Wails custom event bridge:
+
+```go
+app.Event.Emit(keyboard.EventName, event)
+```
+
+```typescript
+import { Events } from '@wailsio/runtime'
+
+const unsubscribe = Events.On('keyboard:push-to-talk', (event) => {
+  // event.data is the keyboard event payload
+})
+```
+
+- Frontend state reducer entry point:
+
+```typescript
+applyKeyboardEvent(state, {
+  key: 'V',
+  pressed: true,
+  source: 'native',
+})
+```
+
+### 3. Contracts
+
+- Default target key for this spike is `V`; the spike may ignore all non-target keys.
+- Windows implementation must emit `pressed=true` only on an up→down transition and `pressed=false` only on a down→up transition; key-repeat while already pressed must not create extra cycles.
+- Low-level Windows hook callbacks must remain minimal. If frontend/Wails emission needs work beyond transition detection, enqueue to a dispatcher instead of blocking the hook callback.
+- `Stop()` must be idempotent and must release the Windows hook if it was installed.
+- Non-Windows implementation must compile as a no-op stub and must not claim push-to-talk support outside Windows.
+- React DOM `keydown`/`keyup` handling is only a focused-window fallback/control path. Game-foreground validation must rely on native Wails events.
+- Spike documentation must keep Windows HITL rows as `pending`, `not tested`, `partial`, or `fail` until a user actually performs the scenario. Do not mark ordinary desktop, borderless game, fullscreen/exclusive game, administrator game, or anti-cheat game as pass from automated tests alone.
+- Do not add formal voice sending, room state, shortcut editor, privilege escalation, anti-cheat bypass, or Go audio capture/playback as part of this spike.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Target key first down | Emit/apply one `pressed=true`; increment down count; set pressed state. |
+| Target key repeats while already down | Suppress as repeat; do not increment completed cycles. |
+| Target key release after down | Emit/apply one `pressed=false`; increment up count; increment completed cycles. |
+| Release arrives without a matching down | Keep state safe; do not report a completed cycle. |
+| Down count exceeds up count | UI shows a missing-release / still-pressed warning. |
+| Non-target key event arrives | Ignore it for target-key counts and cycles. |
+| Malformed Wails payload arrives | Ignore it; do not crash the spike UI. |
+| Hook installation fails | Surface/document the failure; do not claim HITL pass. |
+| Window close-to-tray behavior exists | Preserve `WindowClosing` hide-and-cancel behavior while adding keyboard hook wiring. |
+| HITL not run yet | Keep `docs/spikes/push-to-talk-keyboard.md` as pending/not tested; do not write `Result: pass`. |
+| Administrator or anti-cheat game blocks events | Record as a compatibility limitation; do not add bypass behavior. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Windows hook emits native `V` down/up transitions through `keyboard:push-to-talk`, frontend reducer counts 10 clean cycles, tests cover repeat suppression and malformed payloads, and HITL docs honestly separate pass, partial, fail, and not-tested rows.
+- Base: automated tests and builds pass; manual foreground-game HITL remains pending and is documented as not tested.
+- Bad: relying only on browser DOM keyboard events for a game-foreground claim, doing Wails event emission directly in a blocking hook path, marking untested game scenarios as pass, adding a shortcut editor, auto-elevating the app, or attempting to bypass anti-cheat restrictions.
+
+### 6. Tests Required
+
+- From `apps/desktop/frontend`: `npm run test:run`.
+  - Assert the public `App` route renders the keyboard spike controls.
+  - Assert 10 consecutive target-key down/up pairs produce 10 completed cycles.
+  - Assert repeated keydown while already pressed is suppressed.
+  - Assert missing release displays a clear warning.
+  - Assert non-target keys and malformed native payloads do not corrupt counts or crash UI.
+  - Assert native Wails event subscription can apply `keyboard:push-to-talk` payloads.
+- From `apps/desktop/frontend`: `npm run build`.
+- From `apps/desktop`: `go test ./...` or from repo root `go -C apps/desktop test ./...`.
+- From `apps/desktop`: `wails3 build`.
+- Manual Windows HITL: `wails3 dev`, then record ordinary desktop 10 cycles, borderless/windowed game foreground 10 cycles, fullscreen/exclusive if available, administrator-permission boundary, and anti-cheat-restricted boundary. Keep unrun scenarios as not tested.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+window.addEventListener('keydown', onKeyDown)
+window.addEventListener('keyup', onKeyUp)
+```
+
+Why wrong: DOM keyboard events only prove the focused WebView path. They cannot prove that push-to-talk works when a game owns the foreground.
+
+#### Correct
+
+```go
+app.Event.Emit(keyboard.EventName, keyboard.Event{Key: "V", Pressed: true, Source: keyboard.NativeSource})
+```
+
+```typescript
+Events.On('keyboard:push-to-talk', (event) => {
+  applyKeyboardEvent(state, event.data)
+})
+```
+
+Why correct: the event starts in the native Wails layer and reaches React through the documented Wails custom event bridge, which is the path that can be tested while another app owns the foreground.
+
+#### Wrong
+
+```go
+func lowLevelKeyboardProc(...) uintptr {
+    app.Event.Emit("keyboard:push-to-talk", event)
+    return callNextHook(...)
+}
+```
+
+Why wrong: doing framework event dispatch directly inside the low-level hook callback can block the hook path and make press/release reliability worse.
+
+#### Correct
+
+```go
+func lowLevelKeyboardProc(...) uintptr {
+    dispatcher.Enqueue(event)
+    return callNextHook(...)
+}
+```
+
+Why correct: transition detection stays fast in the hook callback, while Wails event dispatch happens outside the low-level hook path.
