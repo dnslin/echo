@@ -36,6 +36,8 @@ func TestJoinTokenScopesParticipantToRoom(t *testing.T) {
 	assertStringClaim(t, video, "room", "lk_room_abc")
 	assertBoolClaim(t, video, "canPublish", true)
 	assertBoolClaim(t, video, "canSubscribe", true)
+	assertBoolClaim(t, video, "canPublishData", false)
+	assertStringSliceClaim(t, video, "canPublishSources", []string{"microphone"})
 	assertAbsentClaims(t, video, "roomAdmin", "roomCreate", "roomList", "roomRecord", "roomMove", "ingressAdmin", "sipCall")
 	assertAbsentClaims(t, claims, "sip", "agent", "agentDispatch")
 
@@ -113,6 +115,20 @@ func assertStringClaim(t *testing.T, claims map[string]any, key string, want str
 	value, ok := claims[key].(string)
 	if !ok || value != want {
 		t.Fatalf("%s claim = %#v, want %q", key, claims[key], want)
+	}
+}
+
+func assertStringSliceClaim(t *testing.T, claims map[string]any, key string, want []string) {
+	t.Helper()
+	values, ok := claims[key].([]any)
+	if !ok || len(values) != len(want) {
+		t.Fatalf("%s claim = %#v, want %v", key, claims[key], want)
+	}
+	for i, wantValue := range want {
+		value, ok := values[i].(string)
+		if !ok || value != wantValue {
+			t.Fatalf("%s claim = %#v, want %v", key, claims[key], want)
+		}
 	}
 }
 

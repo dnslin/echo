@@ -27,7 +27,7 @@ func TestJoinRoomReturnsExistingRoomAndNonHostMember(t *testing.T) {
 	}
 	createResponse := performJSONRequest(t, router, http.MethodPost, "/v1/rooms", createPayload)
 	if createResponse.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", createResponse.Code, http.StatusCreated, createResponse.Body.Len())
 	}
 	created := decodeCreateRoomResponse(t, createResponse)
 
@@ -39,7 +39,7 @@ func TestJoinRoomReturnsExistingRoomAndNonHostMember(t *testing.T) {
 	}
 	joinResponse := performJSONRequest(t, router, http.MethodPost, "/v1/rooms/join", joinPayload)
 	if joinResponse.Code != http.StatusOK {
-		t.Fatalf("POST /v1/rooms/join status = %d, want %d, body: %s", joinResponse.Code, http.StatusOK, joinResponse.Body.String())
+		t.Fatalf("POST /v1/rooms/join status = %d, want %d, body_bytes=%d", joinResponse.Code, http.StatusOK, joinResponse.Body.Len())
 	}
 	joined := decodeCreateRoomResponse(t, joinResponse)
 
@@ -201,7 +201,7 @@ func TestJoinRoomPassesRequestContext(t *testing.T) {
 	router.ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
-		t.Fatalf("POST /v1/rooms/join status = %d, want %d, body: %s", response.Code, http.StatusOK, response.Body.String())
+		t.Fatalf("POST /v1/rooms/join status = %d, want %d, body_bytes=%d", response.Code, http.StatusOK, response.Body.Len())
 	}
 	if joiner.contextValue != "join-request-context" {
 		t.Fatalf("joiner context value = %v, want join-request-context", joiner.contextValue)
@@ -280,7 +280,7 @@ func jsonUnmarshalResponse(response *httptest.ResponseRecorder, out any) error {
 func assertHTTPError(t *testing.T, response *httptest.ResponseRecorder, wantStatus int, wantCode string, wantMessage string) {
 	t.Helper()
 	if response.Code != wantStatus {
-		t.Fatalf("status = %d, want %d, body: %s", response.Code, wantStatus, response.Body.String())
+		t.Fatalf("status = %d, want %d, body_bytes=%d", response.Code, wantStatus, response.Body.Len())
 	}
 	var body errorResponseBody
 	if err := jsonUnmarshalResponse(response, &body); err != nil {

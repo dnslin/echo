@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"os"
+	"strings"
+	"time"
+)
 
 // Config names the bootstrap settings the API service will need as later issues
 // add persistence, LiveKit, session tokens, and file logging.
@@ -23,5 +27,24 @@ func Default() Config {
 		RoomSessionTokenTTL: 2 * time.Hour,
 		LiveKitTokenTTL:     10 * time.Minute,
 		LogDir:              "./logs",
+	}
+}
+
+func FromEnv() Config {
+	cfg := Default()
+	overlayString(&cfg.HTTPAddr, "ECHO_HTTP_ADDR")
+	overlayString(&cfg.DatabasePath, "ECHO_DATABASE_PATH")
+	overlayString(&cfg.LiveKitURL, "ECHO_LIVEKIT_URL")
+	overlayString(&cfg.LiveKitAPIKey, "ECHO_LIVEKIT_API_KEY")
+	overlayString(&cfg.LiveKitAPISecret, "ECHO_LIVEKIT_API_SECRET")
+	overlayString(&cfg.RoomSessionSecret, "ECHO_ROOM_SESSION_SECRET")
+	overlayString(&cfg.LogDir, "ECHO_LOG_DIR")
+	return cfg
+}
+
+func overlayString(target *string, key string) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value != "" {
+		*target = value
 	}
 }

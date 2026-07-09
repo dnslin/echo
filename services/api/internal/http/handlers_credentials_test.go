@@ -28,7 +28,7 @@ func TestCreateRoomResponseIncludesCredentials(t *testing.T) {
 		"avatar_id":    "avatar_07",
 	})
 	if response.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusCreated, response.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusCreated, response.Body.Len())
 	}
 	body := decodeCreateRoomResponse(t, response)
 
@@ -44,7 +44,7 @@ func TestJoinRoomResponseIncludesCredentials(t *testing.T) {
 		"avatar_id":    "avatar_07",
 	})
 	if createResponse.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", createResponse.Code, http.StatusCreated, createResponse.Body.Len())
 	}
 	created := decodeCreateRoomResponse(t, createResponse)
 
@@ -55,7 +55,7 @@ func TestJoinRoomResponseIncludesCredentials(t *testing.T) {
 		"avatar_id":    "avatar_08",
 	})
 	if joinResponse.Code != http.StatusOK {
-		t.Fatalf("POST /v1/rooms/join status = %d, want %d, body: %s", joinResponse.Code, http.StatusOK, joinResponse.Body.String())
+		t.Fatalf("POST /v1/rooms/join status = %d, want %d, body_bytes=%d", joinResponse.Code, http.StatusOK, joinResponse.Body.Len())
 	}
 	joined := decodeCreateRoomResponse(t, joinResponse)
 
@@ -69,11 +69,11 @@ func TestFreshLiveKitTokenSucceedsForActiveMember(t *testing.T) {
 
 	response := performAuthorizedRequest(t, router, http.MethodPost, "/v1/rooms/"+created.Room.ID+"/livekit-token", created.RoomSessionToken)
 	if response.Code != http.StatusOK {
-		t.Fatalf("POST livekit-token status = %d, want %d, body: %s", response.Code, http.StatusOK, response.Body.String())
+		t.Fatalf("POST livekit-token status = %d, want %d, body_bytes=%d", response.Code, http.StatusOK, response.Body.Len())
 	}
 	body := decodeLiveKitTokenResponse(t, response)
 	if body.LiveKitURL != testCredentialConfig().LiveKitURL || body.LiveKitToken == "" {
-		t.Fatalf("fresh token response = %#v, want configured URL and token", body)
+		t.Fatalf("fresh token fields present = url:%t livekit:%t, want configured URL and non-empty token", body.LiveKitURL == testCredentialConfig().LiveKitURL, body.LiveKitToken != "")
 	}
 	assertLiveKitTokenScope(t, body.LiveKitToken, "lk_"+created.Room.ID, created.Member.LiveKitIdentity, created.Member.Nickname)
 }
@@ -198,7 +198,7 @@ func assertCredentialFields(t *testing.T, body createRoomResponseBody, roomID st
 	t.Helper()
 	cfg := testCredentialConfig()
 	if body.LiveKitURL != cfg.LiveKitURL || body.LiveKitToken == "" || body.RoomSessionToken == "" {
-		t.Fatalf("credential fields = url %q session %q livekit %q, want configured url and tokens", body.LiveKitURL, body.RoomSessionToken, body.LiveKitToken)
+		t.Fatalf("credential fields present = url:%t session:%t livekit:%t, want configured url and non-empty tokens", body.LiveKitURL == cfg.LiveKitURL, body.RoomSessionToken != "", body.LiveKitToken != "")
 	}
 	claims, err := session.Verify(session.VerifyInput{Secret: cfg.RoomSessionSecret, Token: body.RoomSessionToken, Now: credentialNow.Add(time.Minute)})
 	if err != nil {
@@ -219,9 +219,10 @@ func assertLiveKitTokenScope(t *testing.T, token string, wantRoom string, wantId
 	if !ok {
 		t.Fatalf("LiveKit video claim = %#v, want object", claims["video"])
 	}
-	if video["room"] != wantRoom || video["roomJoin"] != true || video["canPublish"] != true || video["canSubscribe"] != true {
-		t.Fatalf("LiveKit video claim = %#v, want scoped room join publish subscribe", video)
+	if video["room"] != wantRoom || video["roomJoin"] != true || video["canPublish"] != true || video["canSubscribe"] != true || video["canPublishData"] != false {
+		t.Fatalf("LiveKit video claim = %#v, want scoped room join publish subscribe without data publish", video)
 	}
+	assertHTTPStringSliceClaim(t, video, "canPublishSources", []string{"microphone"})
 }
 
 func createCredentialRoom(t *testing.T, router http.Handler) createRoomResponseBody {
@@ -232,7 +233,7 @@ func createCredentialRoom(t *testing.T, router http.Handler) createRoomResponseB
 		"avatar_id":    "avatar_07",
 	})
 	if response.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusCreated, response.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusCreated, response.Body.Len())
 	}
 	return decodeCreateRoomResponse(t, response)
 }
@@ -310,4 +311,18 @@ func decodeHTTPJWTPayload(t *testing.T, token string) map[string]any {
 		t.Fatalf("unmarshal JWT payload: %v", err)
 	}
 	return claims
+}
+
+func assertHTTPStringSliceClaim(t *testing.T, claims map[string]any, key string, want []string) {
+	t.Helper()
+	values, ok := claims[key].([]any)
+	if !ok || len(values) != len(want) {
+		t.Fatalf("%s claim = %#v, want %v", key, claims[key], want)
+	}
+	for i, wantValue := range want {
+		value, ok := values[i].(string)
+		if !ok || value != wantValue {
+			t.Fatalf("%s claim = %#v, want %v", key, claims[key], want)
+		}
+	}
 }

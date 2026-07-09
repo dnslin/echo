@@ -73,9 +73,9 @@ paths:
                       voice_mode: push_to_talk
                       livekit_identity: mem_abc
                       joined_at: "2026-07-08T12:00:00Z"
-                    room_session_token: eyJ2ZXJzaW9uIjox...
+                    room_session_token: <room_session_token>
                     livekit_url: wss://livekit.example.com
-                    livekit_token: eyJhbGciOiJIUzI1NiIs...
+                    livekit_token: <livekit_token>
         "400":
           description: 请求校验失败
           content:
@@ -183,9 +183,9 @@ paths:
                       voice_mode: push_to_talk
                       livekit_identity: mem_def
                       joined_at: "2026-07-08T12:01:00Z"
-                    room_session_token: eyJ2ZXJzaW9uIjox...
+                    room_session_token: <room_session_token>
                     livekit_url: wss://livekit.example.com
-                    livekit_token: eyJhbGciOiJIUzI1NiIs...
+                    livekit_token: <livekit_token>
         "400":
           description: 请求校验失败
           content:
@@ -316,7 +316,7 @@ paths:
                 issued:
                   value:
                     livekit_url: wss://livekit.example.com
-                    livekit_token: eyJhbGciOiJIUzI1NiIs...
+                    livekit_token: <livekit_token>
         "401":
           description: 房间会话凭证无效或过期
           content:

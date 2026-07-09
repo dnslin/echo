@@ -29,7 +29,7 @@ func TestCreateRoomReturnsCreatedRoomAndHostMember(t *testing.T) {
 	response := performJSONRequest(t, router, http.MethodPost, "/v1/rooms", payload)
 
 	if response.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusCreated, response.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusCreated, response.Body.Len())
 	}
 	var body createRoomResponseBody
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
@@ -142,7 +142,7 @@ func TestCreateRoomValidationErrors(t *testing.T) {
 			router := newCreateRoomTestRouter(t)
 			response := performJSONRequest(t, router, http.MethodPost, "/v1/rooms", tt.payload)
 			if response.Code != http.StatusBadRequest {
-				t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusBadRequest, response.Body.String())
+				t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusBadRequest, response.Body.Len())
 			}
 			var body errorResponseBody
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
@@ -167,7 +167,7 @@ func TestCreateRoomPassesRequestContext(t *testing.T) {
 	router.ServeHTTP(response, request)
 
 	if response.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusCreated, response.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusCreated, response.Body.Len())
 	}
 	if creator.contextValue != "request-context" {
 		t.Fatalf("creator context value = %v, want request-context", creator.contextValue)
@@ -184,7 +184,7 @@ func TestCreateRoomRejectsOversizedRequestBeforeCreation(t *testing.T) {
 	router.ServeHTTP(response, request)
 
 	if response.Code != http.StatusBadRequest {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusBadRequest, response.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusBadRequest, response.Body.Len())
 	}
 	if creator.calls != 0 {
 		t.Fatalf("room creator calls = %d, want 0", creator.calls)

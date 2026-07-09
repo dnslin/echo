@@ -36,6 +36,13 @@ services/api/go.mod module echo/services/api
 services/api/cmd/api/main.go
 ```
 
+- Runtime config loader:
+
+```go
+func Default() Config
+func FromEnv() Config
+```
+
 - Bootstrap HTTP route:
 
 ```http
@@ -47,7 +54,7 @@ GET /healthz -> 200 application/json
 - `go.work` must include only deployable Go modules that exist in the repository.
 - `services/api` must be an independent Go module; it must not import `apps/desktop/internal/*`.
 - API code that needs an executable smoke surface should expose a public router/handler constructor instead of starting a network listener in tests.
-- Bootstrap config field names must match the future deployment env keys:
+- Bootstrap config field names and `FromEnv()` overlays must match the deployment env keys:
   - `ECHO_HTTP_ADDR`
   - `ECHO_DATABASE_PATH`
   - `ECHO_LIVEKIT_URL`
@@ -55,6 +62,7 @@ GET /healthz -> 200 application/json
   - `ECHO_LIVEKIT_API_SECRET`
   - `ECHO_ROOM_SESSION_SECRET`
   - `ECHO_LOG_DIR`
+- `Default()` owns safe local defaults and explicit TTL defaults. `FromEnv()` starts from `Default()` and overlays non-empty env values. Runtime `cmd/api` startup must use `FromEnv()`, not raw `Default()`, when wiring externally documented config into handlers.
 - If a dependency requires a newer Go version, keep module/workspace `go` directives aligned with the resolved dependency/toolchain and validate with the effective Go toolchain reported by `go env GOVERSION`.
 
 ### 4. Validation & Error Matrix
@@ -66,6 +74,8 @@ GET /healthz -> 200 application/json
 | Smoke route test starts a real listener | Replace with router-level test through `httptest`. |
 | Dependency requires newer Go than local binary | Document/verify Go auto toolchain behavior; do not silently lower `go` directive below dependency requirements. |
 | Env key appears in docs but not config skeleton | Add the matching config field or remove the premature env key. |
+| Documented env key exists but `FromEnv()` does not load it | Add the env overlay and a deterministic `t.Setenv` test. |
+| Runtime startup wires credential/config-dependent handlers from raw `Default()` only | Change startup to use `FromEnv()` and add a router-level startup test that proves env-backed requests reach the success path. |
 
 ### 5. Good/Base/Bad Cases
 
@@ -81,6 +91,10 @@ GET /healthz -> 200 application/json
   - request method/path is `GET /healthz`;
   - status is `200 OK`;
   - JSON body includes `status: "ok"`.
+- Runtime config tests when env-backed fields are used by handlers:
+  - `FromEnv()` loads each documented `ECHO_*` key through `t.Setenv`;
+  - TTL defaults remain explicit after env loading;
+  - a router-level startup seam test proves env-loaded credential config reaches create/join handlers without starting a real listener.
 
 ### 7. Wrong vs Correct
 

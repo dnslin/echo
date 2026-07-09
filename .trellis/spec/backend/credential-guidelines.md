@@ -126,14 +126,16 @@ Authorization: Bearer <room_session_token>
 - Room session tokens are HMAC-SHA256 bearer credentials signed by the API service. They must contain version, room ID, member ID, and expiry.
 - Room session token default TTL is 2 hours. LiveKit token default TTL is 10 minutes.
 - Credential TTLs belong in config (`RoomSessionTokenTTL`, `LiveKitTokenTTL`); handlers pass configured values into token packages instead of hard-coding them locally.
-- LiveKit tokens use `github.com/livekit/protocol/auth` and grant only the media permissions needed for a voice participant:
+- LiveKit tokens use `github.com/livekit/protocol/auth` and grant only the media permissions needed for an MVP voice participant:
   - `RoomJoin: true`
   - `Room: domain.Room.LiveKitRoomName`
   - `Identity: domain.Member.LiveKitIdentity`
   - `Name: domain.Member.Nickname`
   - `CanPublish: true`
   - `CanSubscribe: true`
-- Do not grant LiveKit admin, SIP, agent dispatch, room-management, or unrelated permissions for the MVP member join path.
+  - `CanPublishData: false`
+  - `CanPublishSources: [microphone]`
+- Do not grant LiveKit admin, SIP, agent dispatch, room-management, data publishing, camera publishing, screen-share publishing, or unrelated permissions for the MVP member join path.
 - `POST /v1/rooms/{room_id}/livekit-token` verifies the bearer room session token, checks that token room matches the path room, then loads product room/member state through the room service and store.
 - A member is eligible for fresh LiveKit token issuance only when the room is active and the member state is `online` or `reconnecting`.
 - `anonymous_id` is never sufficient authorization for credential issuance. Product authorization is `room_session_token -> room_id/member_id -> persisted room/member state`.
@@ -166,7 +168,7 @@ Authorization: Bearer <room_session_token>
 - Base: token packages are small and deterministic; tests inject `Now` instead of sleeping.
 - Bad: handler creates a room before discovering credential secrets are missing.
 - Bad: a fresh LiveKit token endpoint accepts `anonymous_id`, `member_id` body fields, or LiveKit participant presence as proof of membership.
-- Bad: token plaintext appears in logs, test fixtures, SQLite models, OpenAPI examples, panic messages, or docs.
+- Bad: token plaintext or token-shaped values such as `eyJ...` appear in logs, test assertion failures, test fixtures, SQLite models, OpenAPI examples, panic messages, or docs.
 
 ### 6. Tests Required
 
@@ -181,7 +183,9 @@ Authorization: Bearer <room_session_token>
   - room grant equals product `LiveKitRoomName`;
   - expiry reflects configured 10-minute TTL;
   - publish and subscribe grants are true;
-  - admin/SIP/agent/unrelated grants are absent;
+  - data publishing is false;
+  - publish sources contain only microphone audio;
+  - admin/SIP/agent/camera/screen-share/unrelated grants are absent;
   - blank credentials/room/identity and non-positive TTL are rejected.
 - Room/store authorization tests:
   - `online` and `reconnecting` members in active rooms are authorized;

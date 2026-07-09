@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/livekit/protocol/auth"
+	lkprotocol "github.com/livekit/protocol/livekit"
 )
 
 const DefaultTokenTTL = 10 * time.Minute
@@ -32,15 +33,19 @@ func JoinToken(input JoinTokenInput) (string, error) {
 
 	canPublish := true
 	canSubscribe := true
+	grant := &auth.VideoGrant{
+		RoomJoin:     true,
+		Room:         roomName,
+		CanPublish:   &canPublish,
+		CanSubscribe: &canSubscribe,
+	}
+	grant.SetCanPublishData(false)
+	grant.SetCanPublishSources([]lkprotocol.TrackSource{lkprotocol.TrackSource_MICROPHONE})
+
 	token := auth.NewAccessToken(apiKey, apiSecret).
 		SetIdentity(identity).
 		SetName(strings.TrimSpace(input.Name)).
 		SetValidFor(input.ValidFor).
-		SetVideoGrant(&auth.VideoGrant{
-			RoomJoin:     true,
-			Room:         roomName,
-			CanPublish:   &canPublish,
-			CanSubscribe: &canSubscribe,
-		})
+		SetVideoGrant(grant)
 	return token.ToJWT()
 }
