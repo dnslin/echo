@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
+- **Total Sessions**: 15
 - **Last Active**: 2026-07-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~491 | Active |
+| `journal-1.md` | ~524 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-07-09 | Issue 14 WebSocket 房间状态契约 | `ca89cbf` | `issue-14-websocket-room-state-contract` |
 | 14 | 2026-07-09 | Fix PR 35 credential review findings | `8d5667a`, `7f69630` | `issue-13-room-livekit-tokens` |
 | 13 | 2026-07-09 | Issue #13 room session and LiveKit credentials | `6be67dc` | `issue-13-room-livekit-tokens` |
 | 12 | 2026-07-08 | Fix PR 34 lifecycle review findings | `97a30ad` | `issue-12-leave-room-lifecycle` |
