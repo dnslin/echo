@@ -489,3 +489,36 @@ Fixed PR #35 credential review findings, verified backend credential flows with 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: Issue 14 WebSocket 房间状态契约
+
+**Date**: 2026-07-09
+**Task**: Issue 14 WebSocket 房间状态契约
+**Branch**: `issue-14-websocket-room-state-contract`
+
+### Summary
+
+Defined the room WebSocket contract for connection authentication, message envelopes, room snapshots, member lifecycle events, mute/speaking state, heartbeat, errors, resync, reconnect semantics, token redaction, and MVP exclusions. Verified with git diff --check, go test -count=1 ./services/api/..., and trellis-check.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ca89cbf` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
