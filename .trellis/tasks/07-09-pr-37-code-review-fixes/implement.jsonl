@@ -1,0 +1,7 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend package checklist for PR review fixes"}
+{"file": ".trellis/spec/backend/websocket-room-state-guidelines.md", "reason": "Room-state WebSocket contracts and tests required"}
+{"file": ".trellis/spec/backend/credential-guidelines.md", "reason": "Room session token and product-member authorization rules"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Token redaction and no-secret logging rules"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "HTTP error envelope and public error mapping"}
+{"file": ".trellis/tasks/archive/2026-07/07-09-issue-15-websocket-room-state/prd.md", "reason": "Original Issue #15 acceptance criteria and scope"}

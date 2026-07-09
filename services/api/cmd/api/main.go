@@ -39,6 +39,7 @@ func newRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 		Authorizer:        roomService,
 		SnapshotStore:     repository,
 		RoomSessionSecret: cfg.RoomSessionSecret,
+		OriginPatterns:    cfg.WebSocketOriginPatterns,
 	})
 	return httpapi.NewRouter(
 		httpapi.WithRoomCreator(roomService),

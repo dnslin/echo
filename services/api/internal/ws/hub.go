@@ -24,6 +24,7 @@ const (
 	DefaultReconnectWindow   = 30 * time.Second
 	DefaultWriteTimeout      = 5 * time.Second
 	DefaultConnectionQueue   = 16
+	DefaultResyncMinInterval = time.Second
 )
 
 type Authorizer interface {
@@ -45,6 +46,8 @@ type Config struct {
 	ReconnectWindow     time.Duration
 	WriteTimeout        time.Duration
 	ConnectionQueueSize int
+	OriginPatterns      []string
+	ResyncMinInterval   time.Duration
 }
 
 type Hub struct {
@@ -57,6 +60,8 @@ type Hub struct {
 	reconnectWindow     time.Duration
 	writeTimeout        time.Duration
 	connectionQueueSize int
+	originPatterns      []string
+	resyncMinInterval   time.Duration
 
 	mu          sync.Mutex
 	rooms       map[string]*roomConnections
@@ -75,12 +80,13 @@ type connection struct {
 	roomID   string
 	memberID string
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	send   chan outboundMessage
-	pong   chan string
-	done   chan struct{}
-	once   sync.Once
+	ctx          context.Context
+	cancel       context.CancelFunc
+	send         chan outboundMessage
+	pong         chan string
+	done         chan struct{}
+	once         sync.Once
+	lastResyncAt time.Time
 }
 
 type outboundMessage struct {
@@ -228,6 +234,9 @@ func NewHub(config Config) *Hub {
 	if config.ConnectionQueueSize <= 0 {
 		config.ConnectionQueueSize = DefaultConnectionQueue
 	}
+	if config.ResyncMinInterval <= 0 {
+		config.ResyncMinInterval = DefaultResyncMinInterval
+	}
 	now := config.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
@@ -242,6 +251,8 @@ func NewHub(config Config) *Hub {
 		reconnectWindow:     config.ReconnectWindow,
 		writeTimeout:        config.WriteTimeout,
 		connectionQueueSize: config.ConnectionQueueSize,
+		originPatterns:      append([]string(nil), config.OriginPatterns...),
+		resyncMinInterval:   config.ResyncMinInterval,
 		rooms:               make(map[string]*roomConnections),
 	}
 }
@@ -272,21 +283,18 @@ func (h *Hub) ServeRoomHTTP(w http.ResponseWriter, r *http.Request, roomID strin
 		return
 	}
 
-	wsConn, err := websocket.Accept(upgradeResponseWriter(w), r, &websocket.AcceptOptions{})
+	wsConn, err := websocket.Accept(upgradeResponseWriter(w), r, &websocket.AcceptOptions{OriginPatterns: h.originPatterns})
 	if err != nil {
 		return
 	}
 	client := h.newConnection(wsConn, authorized.Room.ID, authorized.Member.ID)
-	snapshot, err := h.buildSnapshotEvent(client.ctx, client.roomID, client.memberID)
-	if err != nil {
+	if err := h.registerWithInitialSnapshot(client); err != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), h.writeTimeout)
 		_ = wsjson.Write(ctx, wsConn, h.newRoomErrorEvent(client.roomID, nil, "internal_error", "服务器错误", true))
 		cancel()
 		_ = wsConn.Close(websocket.StatusInternalError, "snapshot failed")
 		return
 	}
-	client.enqueue(outboundMessage{event: snapshot})
-	h.register(client)
 	go client.writeLoop()
 	go client.readLoop()
 	if h.heartbeatInterval > 0 && h.heartbeatTimeout > 0 {
@@ -298,16 +306,51 @@ func (h *Hub) NotifyMemberJoined(_ context.Context, roomValue domain.Room, membe
 	if h == nil || strings.TrimSpace(roomValue.ID) == "" || strings.TrimSpace(memberValue.ID) == "" {
 		return
 	}
-	event := h.newEvent(roomValue.ID, "member.joined", joinedMessagePayload{Member: projectMember(memberValue, "")})
-	h.broadcast(roomValue.ID, outboundMessage{event: event})
+	var slowClients []*connection
+	h.mu.Lock()
+	roomState := h.rooms[roomValue.ID]
+	if roomState == nil || len(roomState.connections) == 0 {
+		h.mu.Unlock()
+		return
+	}
+	roomState.seq++
+	event := eventEnvelope{Type: "member.joined", Seq: roomState.seq, SentAt: h.currentTime(), Payload: joinedMessagePayload{Member: projectMember(memberValue, "")}}
+	for client := range roomState.connections {
+		if !client.enqueueLocked(outboundMessage{event: event}) {
+			slowClients = append(slowClients, client)
+		}
+	}
+	h.mu.Unlock()
+	closeSlowClients(slowClients)
 }
 
 func (h *Hub) NotifyMemberLeft(_ context.Context, roomValue domain.Room, memberValue domain.Member) {
 	if h == nil || strings.TrimSpace(roomValue.ID) == "" || strings.TrimSpace(memberValue.ID) == "" {
 		return
 	}
-	event := h.newEvent(roomValue.ID, "member.left", leftMessagePayload{MemberID: memberValue.ID, LeftAt: h.currentTime()})
-	h.broadcastMemberLeft(roomValue.ID, memberValue.ID, event)
+	var slowClients []*connection
+	h.mu.Lock()
+	roomState := h.rooms[roomValue.ID]
+	if roomState == nil || len(roomState.connections) == 0 {
+		h.mu.Unlock()
+		return
+	}
+	roomState.seq++
+	event := eventEnvelope{Type: "member.left", Seq: roomState.seq, SentAt: h.currentTime(), Payload: leftMessagePayload{MemberID: memberValue.ID, LeftAt: h.currentTime()}}
+	leaving := roomState.byMember[memberValue.ID]
+	for client := range roomState.connections {
+		outbound := outboundMessage{event: event}
+		if client == leaving {
+			outbound.closeAfter = true
+			outbound.closeCode = websocket.StatusNormalClosure
+			outbound.closeReason = "member left"
+		}
+		if !client.enqueueLocked(outbound) {
+			slowClients = append(slowClients, client)
+		}
+	}
+	h.mu.Unlock()
+	closeSlowClients(slowClients)
 }
 
 func (h *Hub) validateConfig() error {
@@ -330,6 +373,41 @@ func (h *Hub) newConnection(wsConn *websocket.Conn, roomID string, memberID stri
 		pong:     make(chan string, 4),
 		done:     make(chan struct{}),
 	}
+}
+
+func (h *Hub) registerWithInitialSnapshot(client *connection) error {
+	var old *connection
+	h.mu.Lock()
+	roomState := h.rooms[client.roomID]
+	sharedSeq := int64(0)
+	if roomState != nil {
+		sharedSeq = roomState.seq
+	}
+	snapshot, err := h.buildSnapshotEventAtSeqLocked(client.ctx, client.roomID, client.memberID, sharedSeq)
+	if err != nil {
+		h.mu.Unlock()
+		return err
+	}
+	if roomState == nil {
+		roomState = &roomConnections{connections: make(map[*connection]struct{}), byMember: make(map[string]*connection)}
+		h.rooms[client.roomID] = roomState
+	}
+	if !client.enqueueLocked(outboundMessage{event: snapshot}) {
+		h.mu.Unlock()
+		client.close(websocket.StatusPolicyViolation, "slow consumer")
+		return errors.New("initial snapshot queue is full")
+	}
+	if existing := roomState.byMember[client.memberID]; existing != nil && existing != client {
+		old = existing
+		delete(roomState.connections, existing)
+	}
+	roomState.connections[client] = struct{}{}
+	roomState.byMember[client.memberID] = client
+	h.mu.Unlock()
+	if old != nil {
+		old.close(websocket.StatusNormalClosure, "connection replaced")
+	}
+	return nil
 }
 
 func (h *Hub) register(client *connection) {
@@ -359,6 +437,9 @@ func (h *Hub) unregister(client *connection) {
 	if roomState.byMember[client.memberID] == client {
 		delete(roomState.byMember, client.memberID)
 	}
+	if len(roomState.connections) == 0 {
+		delete(h.rooms, client.roomID)
+	}
 }
 
 func (h *Hub) roomStateLocked(roomID string) *roomConnections {
@@ -370,64 +451,54 @@ func (h *Hub) roomStateLocked(roomID string) *roomConnections {
 	return roomState
 }
 
-func (h *Hub) nextSeq(roomID string) int64 {
+func (h *Hub) currentSeq(roomID string) int64 {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	roomState := h.roomStateLocked(roomID)
-	roomState.seq++
+	return h.currentSeqLocked(roomID)
+}
+
+func (h *Hub) currentSeqLocked(roomID string) int64 {
+	roomState := h.rooms[roomID]
+	if roomState == nil {
+		return 0
+	}
 	return roomState.seq
 }
 
-func (h *Hub) newEvent(roomID string, eventType string, payload any) eventEnvelope {
-	return eventEnvelope{Type: eventType, Seq: h.nextSeq(roomID), SentAt: h.currentTime(), Payload: payload}
+func (h *Hub) newPrivateEvent(roomID string, eventType string, payload any) eventEnvelope {
+	return eventEnvelope{Type: eventType, Seq: h.currentSeq(roomID), SentAt: h.currentTime(), Payload: payload}
 }
 
-func (h *Hub) broadcast(roomID string, outbound outboundMessage) {
-	clients := h.connectionsForRoom(roomID)
-	for _, client := range clients {
-		client.enqueue(outbound)
-	}
-}
-
-func (h *Hub) broadcastMemberLeft(roomID string, memberID string, event eventEnvelope) {
-	clients, leaving := h.connectionsForRoomAndMember(roomID, memberID)
-	for _, client := range clients {
-		outbound := outboundMessage{event: event}
-		if client == leaving {
-			outbound.closeAfter = true
-			outbound.closeCode = websocket.StatusNormalClosure
-			outbound.closeReason = "member left"
-		}
-		client.enqueue(outbound)
-	}
-}
-
-func (h *Hub) connectionsForRoom(roomID string) []*connection {
+func (h *Hub) newSharedEventForRoom(roomID string, eventType string, payload any) (eventEnvelope, []*connection, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	roomState := h.rooms[roomID]
-	if roomState == nil {
-		return nil
+	if roomState == nil || len(roomState.connections) == 0 {
+		return eventEnvelope{}, nil, false
 	}
+	roomState.seq++
+	event := eventEnvelope{Type: eventType, Seq: roomState.seq, SentAt: h.currentTime(), Payload: payload}
 	clients := make([]*connection, 0, len(roomState.connections))
 	for client := range roomState.connections {
 		clients = append(clients, client)
 	}
-	return clients
+	return event, clients, true
 }
 
-func (h *Hub) connectionsForRoomAndMember(roomID string, memberID string) ([]*connection, *connection) {
+func (h *Hub) newSharedMemberLeftEvent(roomID string, memberID string, payload leftMessagePayload) (eventEnvelope, []*connection, *connection, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	roomState := h.rooms[roomID]
-	if roomState == nil {
-		return nil, nil
+	if roomState == nil || len(roomState.connections) == 0 {
+		return eventEnvelope{}, nil, nil, false
 	}
+	roomState.seq++
+	event := eventEnvelope{Type: "member.left", Seq: roomState.seq, SentAt: h.currentTime(), Payload: payload}
 	clients := make([]*connection, 0, len(roomState.connections))
 	for client := range roomState.connections {
 		clients = append(clients, client)
 	}
-	return clients, roomState.byMember[memberID]
+	return event, clients, roomState.byMember[memberID], true
 }
 
 func (h *Hub) currentTime() time.Time {
@@ -442,16 +513,30 @@ func (h *Hub) currentTime() time.Time {
 }
 
 func (c *connection) sendSnapshot() {
-	event, err := c.hub.buildSnapshotEvent(c.ctx, c.roomID, c.memberID)
+	var slowClient bool
+	c.hub.mu.Lock()
+	event, err := c.hub.buildSnapshotEventAtSeqLocked(c.ctx, c.roomID, c.memberID, c.hub.currentSeqLocked(c.roomID))
+	if err == nil {
+		slowClient = !c.enqueueLocked(outboundMessage{event: event})
+	}
+	c.hub.mu.Unlock()
 	if err != nil {
 		c.sendRoomError(nil, "internal_error", "服务器错误", true)
 		c.enqueue(outboundMessage{event: eventEnvelope{}, closeAfter: true, closeCode: websocket.StatusInternalError, closeReason: "snapshot failed"})
 		return
 	}
-	c.enqueue(outboundMessage{event: event})
+	if slowClient {
+		c.close(websocket.StatusPolicyViolation, "slow consumer")
+	}
 }
 
 func (h *Hub) buildSnapshotEvent(ctx context.Context, roomID string, selfMemberID string) (eventEnvelope, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.buildSnapshotEventAtSeqLocked(ctx, roomID, selfMemberID, h.currentSeqLocked(roomID))
+}
+
+func (h *Hub) buildSnapshotEventAtSeqLocked(ctx context.Context, roomID string, selfMemberID string, seq int64) (eventEnvelope, error) {
 	roomValue, err := h.snapshotStore.FindRoomByID(ctx, roomID)
 	if err != nil {
 		return eventEnvelope{}, err
@@ -460,7 +545,6 @@ func (h *Hub) buildSnapshotEvent(ctx context.Context, roomID string, selfMemberI
 	if err != nil {
 		return eventEnvelope{}, err
 	}
-	seq := h.nextSeq(roomID)
 	return eventEnvelope{
 		Type:   "room.snapshot",
 		Seq:    seq,
@@ -498,7 +582,7 @@ func (c *connection) readLoop() {
 		case "heartbeat.pong":
 			c.handlePong(command.Payload, command.RequestID)
 		case "room.resync_requested":
-			c.sendSnapshot()
+			c.handleResync(command.RequestID)
 		case "":
 			c.sendRoomError(command.RequestID, "invalid_message", "消息格式无效", false)
 		default:
@@ -519,6 +603,16 @@ func (c *connection) handlePong(raw json.RawMessage, requestID *string) {
 	}
 }
 
+func (c *connection) handleResync(requestID *string) {
+	now := c.hub.currentTime()
+	if c.hub.resyncMinInterval > 0 && !c.lastResyncAt.IsZero() && now.Sub(c.lastResyncAt) < c.hub.resyncMinInterval {
+		c.sendRoomError(requestID, "rate_limited", "操作过于频繁，请稍后重试", true)
+		return
+	}
+	c.lastResyncAt = now
+	c.sendSnapshot()
+}
+
 func (c *connection) heartbeatLoop() {
 	interval := c.hub.heartbeatInterval
 	timeout := c.hub.heartbeatTimeout
@@ -531,8 +625,7 @@ func (c *connection) heartbeatLoop() {
 		case <-timer.C:
 		}
 		pingID := fmt.Sprintf("ping-%d", c.hub.pingCounter.Add(1))
-		event := c.hub.newEvent(c.roomID, "heartbeat.ping", heartbeatMessagePayload{PingID: pingID, ServerTime: c.hub.currentTime()})
-		if !c.enqueue(outboundMessage{event: event}) {
+		if !c.enqueuePrivate("heartbeat.ping", heartbeatMessagePayload{PingID: pingID, ServerTime: c.hub.currentTime()}) {
 			return
 		}
 		if !c.waitForPong(pingID, timeout) {
@@ -588,14 +681,38 @@ func (c *connection) writeLoop() {
 }
 
 func (c *connection) enqueue(outbound outboundMessage) bool {
+	if c.enqueueLocked(outbound) {
+		return true
+	}
+	c.close(websocket.StatusPolicyViolation, "slow consumer")
+	return false
+}
+
+func (c *connection) enqueueLocked(outbound outboundMessage) bool {
 	select {
 	case <-c.done:
 		return false
 	case c.send <- outbound:
 		return true
 	default:
-		c.close(websocket.StatusPolicyViolation, "slow consumer")
 		return false
+	}
+}
+
+func (c *connection) enqueuePrivate(eventType string, payload any) bool {
+	c.hub.mu.Lock()
+	event := eventEnvelope{Type: eventType, Seq: c.hub.currentSeqLocked(c.roomID), SentAt: c.hub.currentTime(), Payload: payload}
+	queued := c.enqueueLocked(outboundMessage{event: event})
+	c.hub.mu.Unlock()
+	if !queued {
+		c.close(websocket.StatusPolicyViolation, "slow consumer")
+	}
+	return queued
+}
+
+func closeSlowClients(clients []*connection) {
+	for _, client := range clients {
+		client.close(websocket.StatusPolicyViolation, "slow consumer")
 	}
 }
 
@@ -603,11 +720,14 @@ func (h *Hub) newRoomErrorEvent(roomID string, requestID *string, code string, m
 	payload := errorMessagePayload{RequestID: requestID, Retryable: retryable}
 	payload.Error.Code = code
 	payload.Error.Message = message
-	return h.newEvent(roomID, "room.error", payload)
+	return h.newPrivateEvent(roomID, "room.error", payload)
 }
 
 func (c *connection) sendRoomError(requestID *string, code string, message string, retryable bool) {
-	c.enqueue(outboundMessage{event: c.hub.newRoomErrorEvent(c.roomID, requestID, code, message, retryable)})
+	payload := errorMessagePayload{RequestID: requestID, Retryable: retryable}
+	payload.Error.Code = code
+	payload.Error.Message = message
+	c.enqueuePrivate("room.error", payload)
 }
 
 func (c *connection) close(code websocket.StatusCode, reason string) {

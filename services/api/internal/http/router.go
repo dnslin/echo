@@ -114,5 +114,6 @@ func redactedTokenRequest(request *http.Request) *http.Request {
 		urlCopy.RawQuery = query.Encode()
 	}
 	redacted.URL = &urlCopy
+	redacted.RequestURI = urlCopy.RequestURI()
 	return redacted
 }

@@ -24,6 +24,7 @@ func TestEnvLoadedStartupRouterCreatesRoomWithCredentials(t *testing.T) {
 	t.Setenv("ECHO_LIVEKIT_API_KEY", "env-livekit-key")
 	t.Setenv("ECHO_LIVEKIT_API_SECRET", "env-livekit-secret")
 	t.Setenv("ECHO_ROOM_SESSION_SECRET", "env-room-session-secret")
+	t.Setenv("ECHO_WS_ORIGIN_PATTERNS", "https://desktop-client.example")
 	t.Setenv("ECHO_LOG_DIR", filepath.Join(t.TempDir(), "logs"))
 
 	cfg := config.FromEnv()
@@ -76,7 +77,7 @@ func TestEnvLoadedStartupRouterCreatesRoomWithCredentials(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/rooms/" + created.Room.ID + "/ws?token=" + created.RoomSessionToken
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	conn, responseHTTP, err := websocket.Dial(ctx, wsURL, nil)
+	conn, responseHTTP, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{"Origin": []string{"https://desktop-client.example"}}})
 	if err != nil {
 		status := 0
 		if responseHTTP != nil {

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,6 +87,57 @@ func TestValidConnectionReceivesImmediateSnapshot(t *testing.T) {
 	}
 }
 
+func TestValidCrossOriginConnectionReceivesSnapshotWhenOriginAllowed(t *testing.T) {
+	integration := newWSIntegration(t, func(config *Config) {
+		config.OriginPatterns = []string{"https://client.example"}
+	})
+	created := createRoomThroughHTTP(t, integration.router, "Alice", "avatar_07")
+
+	conn := dialRoomWebSocketWithOrigin(t, integration.server.URL, created.Room.ID, created.RoomSessionToken, "https://client.example")
+	defer conn.Close(websocket.StatusNormalClosure, "test done")
+
+	assertEventType(t, readEvent(t, conn), "room.snapshot")
+}
+
+func TestConnectionReceivesRoomEventAfterSnapshotBuildStarts(t *testing.T) {
+	roomValue := wsTestRoom("room_ordering", "ORDER1", domain.RoomStateActive, wsTestNow)
+	selfMember := wsTestMember("mem_ordering_self", roomValue.ID, domain.MemberStateOnline, true, wsTestNow)
+	joinedMember := wsTestMember("mem_ordering_joined", roomValue.ID, domain.MemberStateOnline, false, wsTestNow.Add(time.Minute))
+	snapshotStore := newBlockingSnapshotStore(roomValue, []domain.Member{selfMember, joinedMember})
+	hub := NewHub(Config{
+		Authorizer:        fixedAuthorizer{result: room.AuthorizeMemberResult{Room: roomValue, Member: selfMember}},
+		SnapshotStore:     snapshotStore,
+		RoomSessionSecret: wsTestSessionSecret,
+		Now:               func() time.Time { return wsTestNow },
+		WriteTimeout:      time.Second,
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hub.ServeRoomHTTP(w, r, roomValue.ID)
+	}))
+	defer server.Close()
+	token := signRoomSessionToken(t, roomValue.ID, selfMember.ID, wsTestNow, 2*time.Hour)
+	conn := dialRoomWebSocket(t, server.URL, roomValue.ID, token)
+	defer conn.Close(websocket.StatusNormalClosure, "test done")
+
+	<-snapshotStore.entered
+	joinedNotified := make(chan struct{})
+	go func() {
+		hub.NotifyMemberJoined(context.Background(), roomValue, joinedMember)
+		close(joinedNotified)
+	}()
+	snapshotStore.releaseSnapshot()
+
+	assertEventType(t, readEvent(t, conn), "room.snapshot")
+	joined := readEvent(t, conn)
+	assertEventType(t, joined, "member.joined")
+	var payload memberJoinedPayload
+	decodePayload(t, joined.Payload, &payload)
+	if payload.Member.MemberID != joinedMember.ID {
+		t.Fatalf("member.joined member_id = %q, want %q", payload.Member.MemberID, joinedMember.ID)
+	}
+	<-joinedNotified
+}
+
 func TestHandshakeRejectsInvalidRoomSessionCredentials(t *testing.T) {
 	integration := newWSIntegration(t)
 	created := createRoomThroughHTTP(t, integration.router, "Alice", "avatar_07")
@@ -139,7 +191,7 @@ func TestHandshakeRejectsInactiveOrMissingProductState(t *testing.T) {
 	}
 	expiredRoomToken := signRoomSessionToken(t, expiredRoom.ID, expiredMember.ID, wsTestNow, 2*time.Hour)
 
-	leaveResponse := performWSJSONRequest(t, integration.router, http.MethodPost, "/v1/rooms/"+created.Room.ID+"/leave", map[string]string{"member_id": created.Member.ID})
+	leaveResponse := performAuthorizedWSJSONRequest(t, integration.router, http.MethodPost, "/v1/rooms/"+created.Room.ID+"/leave", created.RoomSessionToken, map[string]string{"member_id": created.Member.ID})
 	if leaveResponse.Code != http.StatusNoContent {
 		t.Fatalf("leave status = %d, want 204, body: %s", leaveResponse.Code, leaveResponse.Body.String())
 	}
@@ -206,7 +258,7 @@ func TestHTTPLeaveBroadcastsMemberLeftAndSnapshotsExcludeLeavingMember(t *testin
 	assertEventType(t, readEvent(t, hostConn), "room.snapshot")
 	assertEventType(t, readEvent(t, bobConn), "room.snapshot")
 
-	leaveResponse := performWSJSONRequest(t, integration.router, http.MethodPost, "/v1/rooms/"+created.Room.ID+"/leave", map[string]string{"member_id": joined.Member.ID})
+	leaveResponse := performAuthorizedWSJSONRequest(t, integration.router, http.MethodPost, "/v1/rooms/"+created.Room.ID+"/leave", joined.RoomSessionToken, map[string]string{"member_id": joined.Member.ID})
 	if leaveResponse.Code != http.StatusNoContent {
 		t.Fatalf("leave status = %d, want 204, body: %s", leaveResponse.Code, leaveResponse.Body.String())
 	}
@@ -234,6 +286,155 @@ func TestHTTPLeaveBroadcastsMemberLeftAndSnapshotsExcludeLeavingMember(t *testin
 	}
 }
 
+func TestPrivateSnapshotAndErrorDoNotAdvanceSharedBroadcastSequenceForOtherClients(t *testing.T) {
+	integration := newWSIntegration(t)
+	created := createRoomThroughHTTP(t, integration.router, "Alice", "avatar_07")
+	bob := joinRoomThroughHTTP(t, integration.router, created.Room.InviteCode, "Bob", "avatar_08")
+	hostConn := dialRoomWebSocket(t, integration.server.URL, created.Room.ID, created.RoomSessionToken)
+	defer hostConn.Close(websocket.StatusNormalClosure, "test done")
+	bobConn := dialRoomWebSocket(t, integration.server.URL, bob.Room.ID, bob.RoomSessionToken)
+	defer bobConn.Close(websocket.StatusNormalClosure, "test done")
+	hostSnapshotEvent := readEvent(t, hostConn)
+	assertEventType(t, hostSnapshotEvent, "room.snapshot")
+	var hostSnapshot snapshotPayload
+	decodePayload(t, hostSnapshotEvent.Payload, &hostSnapshot)
+	assertEventType(t, readEvent(t, bobConn), "room.snapshot")
+
+	writeClientCommand(t, bobConn, map[string]any{"type": "room.resync_requested", "request_id": "resync-private", "payload": map[string]any{"reason": "test"}})
+	assertEventType(t, readEvent(t, bobConn), "room.snapshot")
+	writeClientCommand(t, bobConn, map[string]any{"type": "member.speaking_changed", "request_id": "error-private", "payload": map[string]any{"speaking": true}})
+	assertEventType(t, readEvent(t, bobConn), "room.error")
+
+	carol := joinRoomThroughHTTP(t, integration.router, created.Room.InviteCode, "Carol", "avatar_09")
+	joined := readEvent(t, hostConn)
+	assertEventType(t, joined, "member.joined")
+	if joined.Seq != hostSnapshot.LastSeq+1 {
+		t.Fatalf("member.joined seq = %d, want %d after private messages on another client", joined.Seq, hostSnapshot.LastSeq+1)
+	}
+	var payload memberJoinedPayload
+	decodePayload(t, joined.Payload, &payload)
+	if payload.Member.MemberID != carol.Member.ID {
+		t.Fatalf("member.joined member_id = %q, want %q", payload.Member.MemberID, carol.Member.ID)
+	}
+}
+
+func TestHeartbeatDoesNotAdvanceSharedBroadcastSequenceForOtherClients(t *testing.T) {
+	integration := newWSIntegration(t, func(config *Config) {
+		config.HeartbeatInterval = 10 * time.Millisecond
+		config.HeartbeatTimeout = time.Second
+	})
+	created := createRoomThroughHTTP(t, integration.router, "Alice", "avatar_07")
+	bob := joinRoomThroughHTTP(t, integration.router, created.Room.InviteCode, "Bob", "avatar_08")
+	hostConn := dialRoomWebSocket(t, integration.server.URL, created.Room.ID, created.RoomSessionToken)
+	defer hostConn.Close(websocket.StatusNormalClosure, "test done")
+	bobConn := dialRoomWebSocket(t, integration.server.URL, bob.Room.ID, bob.RoomSessionToken)
+	defer bobConn.Close(websocket.StatusNormalClosure, "test done")
+	hostSnapshotEvent := readEvent(t, hostConn)
+	assertEventType(t, hostSnapshotEvent, "room.snapshot")
+	var hostSnapshot snapshotPayload
+	decodePayload(t, hostSnapshotEvent.Payload, &hostSnapshot)
+	bobSnapshotEvent := readEvent(t, bobConn)
+	assertEventType(t, bobSnapshotEvent, "room.snapshot")
+	var bobSnapshot snapshotPayload
+	decodePayload(t, bobSnapshotEvent.Payload, &bobSnapshot)
+
+	bobPing := readEvent(t, bobConn)
+	assertEventType(t, bobPing, "heartbeat.ping")
+	if bobPing.Seq != bobSnapshot.LastSeq {
+		t.Fatalf("Bob heartbeat seq = %d, want current shared seq %d", bobPing.Seq, bobSnapshot.LastSeq)
+	}
+	var bobPingPayload heartbeatPingPayload
+	decodePayload(t, bobPing.Payload, &bobPingPayload)
+	writeClientCommand(t, bobConn, map[string]any{"type": "heartbeat.pong", "payload": map[string]string{"ping_id": bobPingPayload.PingID}})
+
+	carol := joinRoomThroughHTTP(t, integration.router, created.Room.InviteCode, "Carol", "avatar_09")
+	joined := readUntilMemberJoinedRespondingToHeartbeat(t, hostConn, hostSnapshot.LastSeq)
+	if joined.Seq != hostSnapshot.LastSeq+1 {
+		t.Fatalf("member.joined seq = %d, want %d after private heartbeat on another client", joined.Seq, hostSnapshot.LastSeq+1)
+	}
+	var payload memberJoinedPayload
+	decodePayload(t, joined.Payload, &payload)
+	if payload.Member.MemberID != carol.Member.ID {
+		t.Fatalf("member.joined member_id = %q, want %q", payload.Member.MemberID, carol.Member.ID)
+	}
+}
+
+func TestHTTPLeaveRequiresMatchingRoomSessionBeforeBroadcastOrClose(t *testing.T) {
+	integration := newWSIntegration(t)
+	alice := createRoomThroughHTTP(t, integration.router, "Alice", "avatar_07")
+	bob := joinRoomThroughHTTP(t, integration.router, alice.Room.InviteCode, "Bob", "avatar_08")
+	aliceConn := dialRoomWebSocket(t, integration.server.URL, alice.Room.ID, alice.RoomSessionToken)
+	defer aliceConn.Close(websocket.StatusNormalClosure, "test done")
+	bobConn := dialRoomWebSocket(t, integration.server.URL, bob.Room.ID, bob.RoomSessionToken)
+	defer bobConn.Close(websocket.StatusNormalClosure, "test done")
+	assertEventType(t, readEvent(t, aliceConn), "room.snapshot")
+	assertEventType(t, readEvent(t, bobConn), "room.snapshot")
+
+	attackResponse := performAuthorizedWSJSONRequest(t, integration.router, http.MethodPost, "/v1/rooms/"+alice.Room.ID+"/leave", bob.RoomSessionToken, map[string]string{"member_id": alice.Member.ID})
+	assertWSHTTPError(t, attackResponse, http.StatusForbidden, "room_session_mismatch", "连接凭证与房间不匹配")
+
+	carol := joinRoomThroughHTTP(t, integration.router, alice.Room.InviteCode, "Carol", "avatar_09")
+	joined := readEvent(t, aliceConn)
+	assertEventType(t, joined, "member.joined")
+	var payload memberJoinedPayload
+	decodePayload(t, joined.Payload, &payload)
+	if payload.Member.MemberID != carol.Member.ID {
+		t.Fatalf("Alice connection received member %q, want later join %q", payload.Member.MemberID, carol.Member.ID)
+	}
+}
+
+func TestHubPrunesEmptyRoomStateAndNotificationsWithoutClientsDoNotCreateRooms(t *testing.T) {
+	integration := newWSIntegration(t)
+	integration.hub.NotifyMemberJoined(context.Background(), domain.Room{ID: "room_without_clients"}, domain.Member{ID: "mem_without_clients"})
+	if hubHasRoomState(integration.hub, "room_without_clients") {
+		t.Fatalf("hub retained room state for HTTP-only notification without connected clients")
+	}
+
+	created := createRoomThroughHTTP(t, integration.router, "Alice", "avatar_07")
+	conn := dialRoomWebSocket(t, integration.server.URL, created.Room.ID, created.RoomSessionToken)
+	assertEventType(t, readEvent(t, conn), "room.snapshot")
+	if !hubHasRoomState(integration.hub, created.Room.ID) {
+		t.Fatalf("hub did not retain room state for connected room")
+	}
+	conn.Close(websocket.StatusNormalClosure, "test done")
+	waitForHubRoomState(t, integration.hub, created.Room.ID, false)
+}
+
+func TestResyncRequestsAreRateLimitedPerConnection(t *testing.T) {
+	integration := newWSIntegration(t, func(config *Config) {
+		config.ResyncMinInterval = time.Minute
+	})
+	created := createRoomThroughHTTP(t, integration.router, "Alice", "avatar_07")
+	conn := dialRoomWebSocket(t, integration.server.URL, created.Room.ID, created.RoomSessionToken)
+	defer conn.Close(websocket.StatusNormalClosure, "test done")
+	assertEventType(t, readEvent(t, conn), "room.snapshot")
+
+	for i := 0; i < 5; i++ {
+		writeClientCommand(t, conn, map[string]any{"type": "room.resync_requested", "request_id": "resync-burst", "payload": map[string]any{"index": i}})
+	}
+
+	snapshots := 0
+	rateLimited := 0
+	for i := 0; i < 5; i++ {
+		event := readEvent(t, conn)
+		switch event.Type {
+		case "room.snapshot":
+			snapshots++
+		case "room.error":
+			var payload roomErrorPayload
+			decodePayload(t, event.Payload, &payload)
+			if payload.Error.Code == "rate_limited" && payload.Retryable {
+				rateLimited++
+			}
+		default:
+			t.Fatalf("burst response event type = %q, want room.snapshot or room.error", event.Type)
+		}
+	}
+	if snapshots != 1 || rateLimited != 4 {
+		t.Fatalf("resync burst responses snapshots/rate_limited = %d/%d, want 1/4", snapshots, rateLimited)
+	}
+}
+
 func TestHeartbeatPingPongKeepsConnectionUsable(t *testing.T) {
 	integration := newWSIntegration(t, func(config *Config) {
 		config.HeartbeatInterval = 10 * time.Millisecond
@@ -242,10 +443,16 @@ func TestHeartbeatPingPongKeepsConnectionUsable(t *testing.T) {
 	created := createRoomThroughHTTP(t, integration.router, "Alice", "avatar_07")
 	conn := dialRoomWebSocket(t, integration.server.URL, created.Room.ID, created.RoomSessionToken)
 	defer conn.Close(websocket.StatusNormalClosure, "test done")
-	assertEventType(t, readEvent(t, conn), "room.snapshot")
+	snapshotEvent := readEvent(t, conn)
+	assertEventType(t, snapshotEvent, "room.snapshot")
+	var snapshot snapshotPayload
+	decodePayload(t, snapshotEvent.Payload, &snapshot)
 
 	ping := readEvent(t, conn)
 	assertEventType(t, ping, "heartbeat.ping")
+	if ping.Seq != snapshot.LastSeq {
+		t.Fatalf("heartbeat seq = %d, want current shared seq %d", ping.Seq, snapshot.LastSeq)
+	}
 	var pingPayload heartbeatPingPayload
 	decodePayload(t, ping.Payload, &pingPayload)
 	if pingPayload.PingID == "" || pingPayload.ServerTime.IsZero() {
@@ -414,6 +621,22 @@ func performWSJSONRequest(t *testing.T, router http.Handler, method string, targ
 	return response
 }
 
+func performAuthorizedWSJSONRequest(t *testing.T, router http.Handler, method string, target string, token string, payload any) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal payload: %v", err)
+	}
+	request := httptest.NewRequest(method, target, bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
 func dialRoomWebSocket(t *testing.T, serverURL string, roomID string, token string) *websocket.Conn {
 	t.Helper()
 	conn, response, err := dialRoomWebSocketRaw(t, serverURL, roomID, token)
@@ -427,7 +650,25 @@ func dialRoomWebSocket(t *testing.T, serverURL string, roomID string, token stri
 	return conn
 }
 
+func dialRoomWebSocketWithOrigin(t *testing.T, serverURL string, roomID string, token string, origin string) *websocket.Conn {
+	t.Helper()
+	conn, response, err := dialRoomWebSocketRawWithOptions(t, serverURL, roomID, token, &websocket.DialOptions{HTTPHeader: http.Header{"Origin": []string{origin}}})
+	if err != nil {
+		if response != nil {
+			body, _ := io.ReadAll(response.Body)
+			t.Fatalf("cross-origin Dial returned error: %v, status=%d body=%s", err, response.StatusCode, string(body))
+		}
+		t.Fatalf("cross-origin Dial returned error: %v", err)
+	}
+	return conn
+}
+
 func dialRoomWebSocketRaw(t *testing.T, serverURL string, roomID string, token string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+	return dialRoomWebSocketRawWithOptions(t, serverURL, roomID, token, nil)
+}
+
+func dialRoomWebSocketRawWithOptions(t *testing.T, serverURL string, roomID string, token string, options *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(serverURL, "http") + "/v1/rooms/" + url.PathEscape(roomID) + "/ws"
 	if token != "" {
@@ -435,7 +676,7 @@ func dialRoomWebSocketRaw(t *testing.T, serverURL string, roomID string, token s
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	return websocket.Dial(ctx, wsURL, nil)
+	return websocket.Dial(ctx, wsURL, options)
 }
 
 func readEvent(t *testing.T, conn *websocket.Conn) testEvent {
@@ -446,8 +687,8 @@ func readEvent(t *testing.T, conn *websocket.Conn) testEvent {
 	if err := wsjson.Read(ctx, conn, &event); err != nil {
 		t.Fatalf("wsjson.Read returned error: %v", err)
 	}
-	if event.Seq <= 0 || event.SentAt.IsZero() || len(event.Payload) == 0 {
-		t.Fatalf("event envelope = %#v, want seq, sent_at, and payload", event)
+	if event.Seq < 0 || event.SentAt.IsZero() || len(event.Payload) == 0 {
+		t.Fatalf("event envelope = %#v, want non-negative seq, sent_at, and payload", event)
 	}
 	return event
 }
@@ -494,6 +735,66 @@ func assertEventType(t *testing.T, event testEvent, want string) {
 	}
 }
 
+func readUntilMemberJoinedRespondingToHeartbeat(t *testing.T, conn *websocket.Conn, heartbeatSeq int64) testEvent {
+	t.Helper()
+	for i := 0; i < 10; i++ {
+		event := readEvent(t, conn)
+		switch event.Type {
+		case "member.joined":
+			return event
+		case "heartbeat.ping":
+			if event.Seq != heartbeatSeq {
+				t.Fatalf("heartbeat before member.joined seq = %d, want %d", event.Seq, heartbeatSeq)
+			}
+			var payload heartbeatPingPayload
+			decodePayload(t, event.Payload, &payload)
+			writeClientCommand(t, conn, map[string]any{"type": "heartbeat.pong", "payload": map[string]string{"ping_id": payload.PingID}})
+		default:
+			t.Fatalf("event type = %q, want member.joined or heartbeat.ping", event.Type)
+		}
+	}
+	t.Fatalf("did not receive member.joined before heartbeat retry limit")
+	return testEvent{}
+}
+
+func assertWSHTTPError(t *testing.T, response *httptest.ResponseRecorder, wantStatus int, wantCode string, wantMessage string) {
+	t.Helper()
+	if response.Code != wantStatus {
+		t.Fatalf("status = %d, want %d, body=%s", response.Code, wantStatus, response.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("error response returned invalid JSON: %v", err)
+	}
+	if body.Error.Code != wantCode || body.Error.Message != wantMessage {
+		t.Fatalf("error response = %s/%s, want %s/%s", body.Error.Code, body.Error.Message, wantCode, wantMessage)
+	}
+}
+
+func hubHasRoomState(h *Hub, roomID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.rooms[roomID]
+	return ok
+}
+
+func waitForHubRoomState(t *testing.T, h *Hub, roomID string, want bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if hubHasRoomState(h, roomID) == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("hub room state for %q = %v, want %v", roomID, hubHasRoomState(h, roomID), want)
+}
+
 func assertPreUpgradeError(t *testing.T, response *http.Response, wantStatus int, wantCode string, wantMessage string) {
 	t.Helper()
 	if response == nil {
@@ -525,6 +826,44 @@ func signRoomSessionToken(t *testing.T, roomID string, memberID string, now time
 		t.Fatalf("session.Sign returned error: %v", err)
 	}
 	return token
+}
+
+type fixedAuthorizer struct {
+	result room.AuthorizeMemberResult
+	err    error
+}
+
+func (f fixedAuthorizer) AuthorizeMemberContext(context.Context, room.AuthorizeMemberInput) (room.AuthorizeMemberResult, error) {
+	if f.err != nil {
+		return room.AuthorizeMemberResult{}, f.err
+	}
+	return f.result, nil
+}
+
+type blockingSnapshotStore struct {
+	room    domain.Room
+	members []domain.Member
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newBlockingSnapshotStore(roomValue domain.Room, members []domain.Member) *blockingSnapshotStore {
+	return &blockingSnapshotStore{room: roomValue, members: members, entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (s *blockingSnapshotStore) FindRoomByID(context.Context, string) (domain.Room, error) {
+	s.once.Do(func() { close(s.entered) })
+	<-s.release
+	return s.room, nil
+}
+
+func (s *blockingSnapshotStore) ListRoomMembersByStates(context.Context, string, []domain.MemberState) ([]domain.Member, error) {
+	return append([]domain.Member(nil), s.members...), nil
+}
+
+func (s *blockingSnapshotStore) releaseSnapshot() {
+	close(s.release)
 }
 
 func wsTestRoom(id string, inviteCode string, state domain.RoomState, now time.Time) domain.Room {

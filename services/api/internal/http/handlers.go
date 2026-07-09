@@ -203,9 +203,23 @@ func (h *Handlers) LeaveRoom(c *gin.Context) {
 		return
 	}
 
+	pathRoomID := strings.TrimSpace(c.Param("room_id"))
+	memberID := strings.TrimSpace(request.MemberID)
+	if pathRoomID == "" {
+		writeError(c, http.StatusBadRequest, "invalid_room_id", "房间标识不能为空")
+		return
+	}
+	if memberID == "" {
+		writeError(c, http.StatusBadRequest, "invalid_member_id", "成员标识不能为空")
+		return
+	}
+	if err := h.authorizeLeave(c, pathRoomID, memberID); err != nil {
+		return
+	}
+
 	result, err := h.roomLeaver.LeaveContext(c.Request.Context(), room.LeaveInput{
-		RoomID:   c.Param("room_id"),
-		MemberID: request.MemberID,
+		RoomID:   pathRoomID,
+		MemberID: memberID,
 	})
 	if err != nil {
 		writeRoomError(c, err)
@@ -216,6 +230,36 @@ func (h *Handlers) LeaveRoom(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handlers) authorizeLeave(c *gin.Context, pathRoomID string, memberID string) error {
+	token, ok := bearerToken(c.GetHeader("Authorization"))
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "invalid_room_session", "连接凭证无效，请重新进入房间")
+		return errors.New("missing room session")
+	}
+	if strings.TrimSpace(h.credentialConfig.RoomSessionSecret) == "" {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return errors.New("room session config is incomplete")
+	}
+	claims, err := session.Verify(session.VerifyInput{Secret: h.credentialConfig.RoomSessionSecret, Token: token, Now: h.now()})
+	if err != nil {
+		writeSessionError(c, err)
+		return err
+	}
+	if claims.RoomID != pathRoomID || claims.MemberID != memberID {
+		writeError(c, http.StatusForbidden, "room_session_mismatch", "连接凭证与房间不匹配")
+		return errors.New("room session mismatch")
+	}
+	if h.roomAuthorizer == nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return errors.New("room authorizer is not configured")
+	}
+	if _, err := h.roomAuthorizer.AuthorizeMemberContext(c.Request.Context(), room.AuthorizeMemberInput{RoomID: claims.RoomID, MemberID: claims.MemberID}); err != nil {
+		writeCredentialRoomError(c, err)
+		return err
+	}
+	return nil
 }
 
 func (h *Handlers) FreshLiveKitToken(c *gin.Context) {

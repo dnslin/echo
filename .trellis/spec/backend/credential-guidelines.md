@@ -8,7 +8,7 @@
 
 ### 1. Scope / Trigger
 
-- Trigger: adding or modifying room session tokens, LiveKit token issuance, credential-bearing room API responses, WebSocket room-session handshakes, or credential authorization endpoints under `services/api/**`.
+- Trigger: adding or modifying room session tokens, LiveKit token issuance, credential-bearing room API responses, bearer-protected room commands such as HTTP leave, WebSocket room-session handshakes, or credential authorization endpoints under `services/api/**`.
 - Applies to `services/api/internal/session/**`, `services/api/internal/livekit/**`, credential fields and credential-bearing routes in `services/api/internal/http/**`, credential config in `services/api/internal/config/**`, product-member authorization in `services/api/internal/room/**` and `services/api/internal/store/**`, room-state WebSocket code in `services/api/internal/ws/**`, and `services/api/openapi.yaml`.
 - Echo MVP uses the business service as the authority for product-room membership. LiveKit only receives short-lived media join tokens after product membership has been validated.
 
@@ -120,6 +120,13 @@ POST /v1/rooms/{room_id}/livekit-token
 Authorization: Bearer <room_session_token>
 ```
 
+HTTP leave endpoint:
+
+```http
+POST /v1/rooms/{room_id}/leave
+Authorization: Bearer <room_session_token>
+```
+
 ### 3. Contracts
 
 - `POST /v1/rooms` and `POST /v1/rooms/join` success responses include the existing `room` and `member` objects plus top-level `room_session_token`, `livekit_url`, and `livekit_token`.
@@ -137,12 +144,13 @@ Authorization: Bearer <room_session_token>
   - `CanPublishSources: [microphone]`
 - Do not grant LiveKit admin, SIP, agent dispatch, room-management, data publishing, camera publishing, screen-share publishing, or unrelated permissions for the MVP member join path.
 - `POST /v1/rooms/{room_id}/livekit-token` verifies the bearer room session token, checks that token room matches the path room, then loads product room/member state through the room service and store.
+- `POST /v1/rooms/{room_id}/leave` verifies the bearer room session token, checks that token room matches the path room and token member matches the request body `member_id`, then loads product room/member state through the room service before leaving or notifying WebSocket clients.
 - `GET /v1/rooms/{room_id}/ws?token=<room_session_token>` verifies the query room session token because browser/WebView2 WebSocket handshakes cannot attach arbitrary `Authorization` headers.
 - WebSocket room-session handshakes must apply the same token verification rules as bearer-token credential endpoints: verify signature, version, expiry, non-empty room/member claims, and path-room match before trusting client payloads.
 - WebSocket identity must derive from verified token claims plus persisted product room/member state only. Do not accept body fields, client-sent member IDs, `anonymous_id`, or LiveKit participant presence as authorization.
 - WebSocket router/middleware code must redact the `token` query parameter from Gin context/recovery/log surfaces while still passing the original request or extracted token to the authentication logic.
-- A member is eligible for fresh LiveKit token issuance or room-state WebSocket connection only when the room is active and the member state is `online` or `reconnecting`.
-- `anonymous_id` is never sufficient authorization for credential issuance or room-state WebSocket access. Product authorization is `room_session_token -> room_id/member_id -> persisted room/member state`.
+- A member is eligible for fresh LiveKit token issuance, authenticated HTTP leave, or room-state WebSocket connection only when the room is active and the member state is `online` or `reconnecting`.
+- `anonymous_id` is never sufficient authorization for credential issuance, HTTP leave, or room-state WebSocket access. Product authorization is `room_session_token -> room_id/member_id -> persisted room/member state`.
 - Credential config must be complete before create/join mutates product state. If LiveKit URL/key/secret or room session secret is missing, return `500 internal_error` before creating a room or adding a member.
 - Do not persist room session tokens or LiveKit tokens in SQLite.
 - Do not log token plaintext, API secrets, room session secrets, sensitive request bodies, or audio data.
@@ -155,7 +163,7 @@ Authorization: Bearer <room_session_token>
 | Room session token is blank, malformed, invalid base64, invalid JSON, unsigned/tampered, wrong-secret, unsupported version, or missing required claims | Return `session.ErrInvalidToken`; HTTP maps to `401 invalid_room_session`. |
 | Room session token expiry is not after verification time | Return `session.ErrExpiredToken`; HTTP maps to `401 room_session_expired`. |
 | Bearer header is missing or not `Bearer <token>` | Return `401 invalid_room_session`. |
-| Token `room_id` does not match path `{room_id}` | Return `403 room_session_mismatch`; do not load or issue a LiveKit token. |
+| Token `room_id` does not match path `{room_id}`, or authenticated leave token `member_id` does not match body `member_id` | Return `403 room_session_mismatch`; do not load state, mutate leave state, notify WebSocket clients, or issue a LiveKit token. |
 | Credential config is incomplete for create/join/fresh token | Return `500 internal_error` without exposing which secret value is missing. Create/join must not mutate room/member state. |
 | Room authorization repository is unavailable | Return `500 internal_error`. |
 | Persisted room is missing | Return/map `room.ErrRoomNotFound` to `404 room_not_found`. |

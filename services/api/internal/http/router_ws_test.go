@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -43,6 +44,9 @@ func TestRedactedTokenRequestPreservesOriginalAndOtherQuery(t *testing.T) {
 	query := redacted.URL.Query()
 	if query.Get("token") != "redacted" || query.Get("other") != "kept" {
 		t.Fatalf("redacted query token/other = %q/%q, want redacted/kept", query.Get("token"), query.Get("other"))
+	}
+	if strings.Contains(redacted.RequestURI, "real-sensitive-token") || !strings.Contains(redacted.RequestURI, "token=redacted") || !strings.Contains(redacted.RequestURI, "other=kept") {
+		t.Fatalf("redacted RequestURI = %q, want token redacted and other query preserved", redacted.RequestURI)
 	}
 }
 

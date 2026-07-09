@@ -116,7 +116,7 @@ Fields:
 | `sent_at` | RFC3339 UTC string | yes | Server send time. |
 | `payload` | object | yes | Event payload. |
 
-`seq` is not a replay guarantee. WebSocket transport preserves order while connected, and clients use `seq` to detect gaps and request a fresh `room.snapshot`. A `room.snapshot` is also sequenced; its payload `last_seq` must match the envelope `seq` so clients know the current stream position.
+`seq` is not a replay guarantee. WebSocket transport preserves order while connected, and clients use `seq` to detect gaps and request a fresh `room.snapshot`. Shared room-state broadcasts advance the product room event stream. Client-private messages such as `room.snapshot`, `heartbeat.ping`, and `room.error` carry the latest shared stream position visible to that connection and do not create gaps for other clients; a `room.snapshot` payload `last_seq` must match the envelope `seq`.
 
 ### Client-to-server command envelope
 
@@ -293,7 +293,7 @@ Payload:
 
 ### `member.left`
 
-Broadcast after a member intentionally leaves the room through WebSocket or HTTP leave flow.
+Broadcast after a member intentionally leaves the room through WebSocket or the HTTP leave flow. HTTP leave requires `Authorization: Bearer <room_session_token>`, and the token room/member claims must match the path room and request `member_id` before the API mutates product state or notifies WebSocket clients.
 
 Payload:
 
@@ -629,9 +629,11 @@ Authorization: Bearer <room_session_token>
 
 ## Sequence and resync rules
 
-- Server `seq` increases by one for each room event emitted by the WebSocket hub.
-- A `room.snapshot` includes `last_seq`, the highest sequence included in that snapshot.
+- Server `seq` increases by one for each shared room broadcast emitted by the WebSocket hub.
+- Client-private `room.snapshot`, `heartbeat.ping`, and `room.error` messages reuse the latest shared stream position visible to the receiving connection and do not advance room-wide `seq`.
+- A `room.snapshot` includes `last_seq`, the highest shared sequence included in that snapshot.
 - If a client observes a sequence gap, it should send `room.resync_requested`.
+- The server may rate-limit or coalesce repeated `room.resync_requested` commands and return retryable `room.error` with `rate_limited` for bursts.
 - If the server drops queued messages because a client is too slow, it should send `room.resync_required` when possible, or close the connection if backpressure makes delivery unsafe.
 - The server is not required to replay historical events for MVP.
 
