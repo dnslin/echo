@@ -32,6 +32,11 @@ type roomMemberAuthorizer interface {
 	AuthorizeMemberContext(ctx context.Context, input room.AuthorizeMemberInput) (room.AuthorizeMemberResult, error)
 }
 
+type roomEventNotifier interface {
+	NotifyMemberJoined(ctx context.Context, roomValue domain.Room, memberValue domain.Member)
+	NotifyMemberLeft(ctx context.Context, roomValue domain.Room, memberValue domain.Member)
+}
+
 type CredentialConfig struct {
 	LiveKitURL          string
 	LiveKitAPIKey       string
@@ -43,15 +48,16 @@ type CredentialConfig struct {
 }
 
 type Handlers struct {
-	roomCreator      roomCreator
-	roomJoiner       roomJoiner
-	roomLeaver       roomLeaver
-	roomAuthorizer   roomMemberAuthorizer
-	credentialConfig CredentialConfig
+	roomCreator       roomCreator
+	roomJoiner        roomJoiner
+	roomLeaver        roomLeaver
+	roomAuthorizer    roomMemberAuthorizer
+	roomEventNotifier roomEventNotifier
+	credentialConfig  CredentialConfig
 }
 
-func NewHandlers(roomCreator roomCreator, roomJoiner roomJoiner, roomLeaver roomLeaver, roomAuthorizer roomMemberAuthorizer, credentialConfig CredentialConfig) *Handlers {
-	return &Handlers{roomCreator: roomCreator, roomJoiner: roomJoiner, roomLeaver: roomLeaver, roomAuthorizer: roomAuthorizer, credentialConfig: credentialConfig}
+func NewHandlers(roomCreator roomCreator, roomJoiner roomJoiner, roomLeaver roomLeaver, roomAuthorizer roomMemberAuthorizer, roomEventNotifier roomEventNotifier, credentialConfig CredentialConfig) *Handlers {
+	return &Handlers{roomCreator: roomCreator, roomJoiner: roomJoiner, roomLeaver: roomLeaver, roomAuthorizer: roomAuthorizer, roomEventNotifier: roomEventNotifier, credentialConfig: credentialConfig}
 }
 
 type createRoomRequest struct {
@@ -182,6 +188,9 @@ func (h *Handlers) JoinRoom(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
 		return
 	}
+	if h.roomEventNotifier != nil {
+		h.roomEventNotifier.NotifyMemberJoined(c.Request.Context(), result.Room, result.Member)
+	}
 	c.JSON(http.StatusOK, response)
 }
 
@@ -194,13 +203,16 @@ func (h *Handlers) LeaveRoom(c *gin.Context) {
 		return
 	}
 
-	_, err := h.roomLeaver.LeaveContext(c.Request.Context(), room.LeaveInput{
+	result, err := h.roomLeaver.LeaveContext(c.Request.Context(), room.LeaveInput{
 		RoomID:   c.Param("room_id"),
 		MemberID: request.MemberID,
 	})
 	if err != nil {
 		writeRoomError(c, err)
 		return
+	}
+	if h.roomEventNotifier != nil {
+		h.roomEventNotifier.NotifyMemberLeft(c.Request.Context(), result.Room, result.Member)
 	}
 
 	c.Status(http.StatusNoContent)

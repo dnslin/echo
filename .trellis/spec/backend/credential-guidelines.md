@@ -8,8 +8,8 @@
 
 ### 1. Scope / Trigger
 
-- Trigger: adding or modifying room session tokens, LiveKit token issuance, credential-bearing room API responses, or credential authorization endpoints under `services/api/**`.
-- Applies to `services/api/internal/session/**`, `services/api/internal/livekit/**`, credential fields in `services/api/internal/http/**`, credential config in `services/api/internal/config/**`, product-member authorization in `services/api/internal/room/**` and `services/api/internal/store/**`, and `services/api/openapi.yaml`.
+- Trigger: adding or modifying room session tokens, LiveKit token issuance, credential-bearing room API responses, WebSocket room-session handshakes, or credential authorization endpoints under `services/api/**`.
+- Applies to `services/api/internal/session/**`, `services/api/internal/livekit/**`, credential fields and credential-bearing routes in `services/api/internal/http/**`, credential config in `services/api/internal/config/**`, product-member authorization in `services/api/internal/room/**` and `services/api/internal/store/**`, room-state WebSocket code in `services/api/internal/ws/**`, and `services/api/openapi.yaml`.
 - Echo MVP uses the business service as the authority for product-room membership. LiveKit only receives short-lived media join tokens after product membership has been validated.
 
 ### 2. Signatures
@@ -137,8 +137,12 @@ Authorization: Bearer <room_session_token>
   - `CanPublishSources: [microphone]`
 - Do not grant LiveKit admin, SIP, agent dispatch, room-management, data publishing, camera publishing, screen-share publishing, or unrelated permissions for the MVP member join path.
 - `POST /v1/rooms/{room_id}/livekit-token` verifies the bearer room session token, checks that token room matches the path room, then loads product room/member state through the room service and store.
-- A member is eligible for fresh LiveKit token issuance only when the room is active and the member state is `online` or `reconnecting`.
-- `anonymous_id` is never sufficient authorization for credential issuance. Product authorization is `room_session_token -> room_id/member_id -> persisted room/member state`.
+- `GET /v1/rooms/{room_id}/ws?token=<room_session_token>` verifies the query room session token because browser/WebView2 WebSocket handshakes cannot attach arbitrary `Authorization` headers.
+- WebSocket room-session handshakes must apply the same token verification rules as bearer-token credential endpoints: verify signature, version, expiry, non-empty room/member claims, and path-room match before trusting client payloads.
+- WebSocket identity must derive from verified token claims plus persisted product room/member state only. Do not accept body fields, client-sent member IDs, `anonymous_id`, or LiveKit participant presence as authorization.
+- WebSocket router/middleware code must redact the `token` query parameter from Gin context/recovery/log surfaces while still passing the original request or extracted token to the authentication logic.
+- A member is eligible for fresh LiveKit token issuance or room-state WebSocket connection only when the room is active and the member state is `online` or `reconnecting`.
+- `anonymous_id` is never sufficient authorization for credential issuance or room-state WebSocket access. Product authorization is `room_session_token -> room_id/member_id -> persisted room/member state`.
 - Credential config must be complete before create/join mutates product state. If LiveKit URL/key/secret or room session secret is missing, return `500 internal_error` before creating a room or adding a member.
 - Do not persist room session tokens or LiveKit tokens in SQLite.
 - Do not log token plaintext, API secrets, room session secrets, sensitive request bodies, or audio data.

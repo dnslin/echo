@@ -9,6 +9,7 @@ import (
 	"echo/services/api/internal/invite"
 	"echo/services/api/internal/room"
 	"echo/services/api/internal/store"
+	apiws "echo/services/api/internal/ws"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -32,12 +33,20 @@ func main() {
 }
 
 func newRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
-	roomService := room.NewService(store.NewRepository(db), invite.NewGenerator())
+	repository := store.NewRepository(db)
+	roomService := room.NewService(repository, invite.NewGenerator())
+	roomHub := apiws.NewHub(apiws.Config{
+		Authorizer:        roomService,
+		SnapshotStore:     repository,
+		RoomSessionSecret: cfg.RoomSessionSecret,
+	})
 	return httpapi.NewRouter(
 		httpapi.WithRoomCreator(roomService),
 		httpapi.WithRoomJoiner(roomService),
 		httpapi.WithRoomLeaver(roomService),
 		httpapi.WithRoomMemberAuthorizer(roomService),
+		httpapi.WithRoomWebSocket(roomHub),
+		httpapi.WithRoomEventNotifier(roomHub),
 		httpapi.WithCredentialConfig(httpapi.CredentialConfig{
 			LiveKitURL:          cfg.LiveKitURL,
 			LiveKitAPIKey:       cfg.LiveKitAPIKey,
