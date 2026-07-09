@@ -73,6 +73,9 @@ paths:
                       voice_mode: push_to_talk
                       livekit_identity: mem_abc
                       joined_at: "2026-07-08T12:00:00Z"
+                    room_session_token: <room_session_token>
+                    livekit_url: wss://livekit.example.com
+                    livekit_token: <livekit_token>
         "400":
           description: 请求校验失败
           content:
@@ -180,6 +183,9 @@ paths:
                       voice_mode: push_to_talk
                       livekit_identity: mem_def
                       joined_at: "2026-07-08T12:01:00Z"
+                    room_session_token: <room_session_token>
+                    livekit_url: wss://livekit.example.com
+                    livekit_token: <livekit_token>
         "400":
           description: 请求校验失败
           content:
@@ -270,6 +276,107 @@ paths:
                       message: 该房间已过期，请让朋友重新创建
         "500":
           description: 服务端错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                internalError:
+                  value:
+                    error:
+                      code: internal_error
+                      message: 服务器错误
+  /v1/rooms/{room_id}/livekit-token:
+    post:
+      summary: 重新签发 LiveKit 短期加入凭证
+      operationId: issueLiveKitToken
+      parameters:
+        - name: room_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+          description: 临时房间标识，必须与房间会话凭证中的 room_id 一致。
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: "^Bearer .+"
+          description: 房间会话凭证，格式为 `Bearer <room_session_token>`。
+      responses:
+        "200":
+          description: LiveKit 凭证签发成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveKitTokenResponse"
+              examples:
+                issued:
+                  value:
+                    livekit_url: wss://livekit.example.com
+                    livekit_token: <livekit_token>
+        "401":
+          description: 房间会话凭证无效或过期
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidRoomSession:
+                  value:
+                    error:
+                      code: invalid_room_session
+                      message: 连接凭证无效，请重新进入房间
+                roomSessionExpired:
+                  value:
+                    error:
+                      code: room_session_expired
+                      message: 连接凭证已过期，请重新进入房间
+        "403":
+          description: 房间会话凭证与路径不匹配，或成员不在活跃状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                roomSessionMismatch:
+                  value:
+                    error:
+                      code: room_session_mismatch
+                      message: 连接凭证与房间不匹配
+                memberNotActive:
+                  value:
+                    error:
+                      code: member_not_active
+                      message: 成员不在房间中
+        "404":
+          description: 房间不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                roomNotFound:
+                  value:
+                    error:
+                      code: room_not_found
+                      message: 房间不存在或已失效
+        "410":
+          description: 房间已过期
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                roomExpired:
+                  value:
+                    error:
+                      code: room_expired
+                      message: 该房间已过期，请让朋友重新创建
+        "500":
+          description: 服务端错误或凭证服务配置无效
           content:
             application/json:
               schema:
@@ -438,11 +545,37 @@ components:
       required:
         - room
         - member
+        - room_session_token
+        - livekit_url
+        - livekit_token
       properties:
         room:
           $ref: "#/components/schemas/Room"
         member:
           $ref: "#/components/schemas/Member"
+        room_session_token:
+          type: string
+          description: 业务服务签名的短期房间会话凭证；客户端后续以 Bearer 方式提交，不应记录明文。
+        livekit_url:
+          type: string
+          format: uri
+          description: 客户端连接的 LiveKit 服务地址。
+        livekit_token:
+          type: string
+          description: LiveKit 短期加入凭证；仅适用于返回的房间和成员身份，不应记录明文。
+    LiveKitTokenResponse:
+      type: object
+      required:
+        - livekit_url
+        - livekit_token
+      properties:
+        livekit_url:
+          type: string
+          format: uri
+          description: 客户端连接的 LiveKit 服务地址。
+        livekit_token:
+          type: string
+          description: 新签发的 LiveKit 短期加入凭证；不应记录明文。
     Room:
       type: object
       required:
@@ -561,6 +694,10 @@ components:
                 - member_not_found
                 - room_expired
                 - room_full
+                - invalid_room_session
+                - room_session_expired
+                - room_session_mismatch
+                - member_not_active
                 - internal_error
             message:
               type: string

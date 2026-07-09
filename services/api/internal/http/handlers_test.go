@@ -29,7 +29,7 @@ func TestCreateRoomReturnsCreatedRoomAndHostMember(t *testing.T) {
 	response := performJSONRequest(t, router, http.MethodPost, "/v1/rooms", payload)
 
 	if response.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusCreated, response.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusCreated, response.Body.Len())
 	}
 	var body createRoomResponseBody
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
@@ -142,7 +142,7 @@ func TestCreateRoomValidationErrors(t *testing.T) {
 			router := newCreateRoomTestRouter(t)
 			response := performJSONRequest(t, router, http.MethodPost, "/v1/rooms", tt.payload)
 			if response.Code != http.StatusBadRequest {
-				t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusBadRequest, response.Body.String())
+				t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusBadRequest, response.Body.Len())
 			}
 			var body errorResponseBody
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
@@ -157,7 +157,7 @@ func TestCreateRoomValidationErrors(t *testing.T) {
 
 func TestCreateRoomPassesRequestContext(t *testing.T) {
 	creator := &captureContextRoomCreator{}
-	router := NewRouter(WithRoomCreator(creator))
+	router := NewRouter(WithRoomCreator(creator), WithCredentialConfig(testCredentialConfig()))
 	request := httptest.NewRequest(http.MethodPost, "/v1/rooms", strings.NewReader(`{"anonymous_id":"anon_local_123","nickname":"Alice","avatar_id":"avatar_07"}`))
 	request.Header.Set("Content-Type", "application/json")
 	ctx := context.WithValue(request.Context(), testContextKey{}, "request-context")
@@ -167,7 +167,7 @@ func TestCreateRoomPassesRequestContext(t *testing.T) {
 	router.ServeHTTP(response, request)
 
 	if response.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusCreated, response.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusCreated, response.Body.Len())
 	}
 	if creator.contextValue != "request-context" {
 		t.Fatalf("creator context value = %v, want request-context", creator.contextValue)
@@ -176,7 +176,7 @@ func TestCreateRoomPassesRequestContext(t *testing.T) {
 
 func TestCreateRoomRejectsOversizedRequestBeforeCreation(t *testing.T) {
 	creator := &captureContextRoomCreator{}
-	router := NewRouter(WithRoomCreator(creator))
+	router := NewRouter(WithRoomCreator(creator), WithCredentialConfig(testCredentialConfig()))
 	request := httptest.NewRequest(http.MethodPost, "/v1/rooms", strings.NewReader(`{"anonymous_id":"anon_local_123","nickname":"`+strings.Repeat("a", maxCreateRoomRequestBytes)+`","avatar_id":"avatar_07"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -184,7 +184,7 @@ func TestCreateRoomRejectsOversizedRequestBeforeCreation(t *testing.T) {
 	router.ServeHTTP(response, request)
 
 	if response.Code != http.StatusBadRequest {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", response.Code, http.StatusBadRequest, response.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusBadRequest, response.Body.Len())
 	}
 	if creator.calls != 0 {
 		t.Fatalf("room creator calls = %d, want 0", creator.calls)
@@ -210,7 +210,7 @@ func newCreateRoomTestRouter(t *testing.T) http.Handler {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	roomService := room.NewService(store.NewRepository(db), invite.NewGenerator())
-	return NewRouter(WithRoomCreator(roomService))
+	return NewRouter(WithRoomCreator(roomService), WithCredentialConfig(testCredentialConfig()))
 }
 
 func performJSONRequest(t *testing.T, handler http.Handler, method string, target string, payload any) *httptest.ResponseRecorder {
@@ -239,11 +239,12 @@ func (c *captureContextRoomCreator) CreateContext(ctx context.Context, input roo
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	return room.CreateResult{
 		Room: domain.Room{
-			ID:         "room_test",
-			Name:       "临时房间",
-			InviteCode: "ABC123",
-			State:      domain.RoomStateActive,
-			CreatedAt:  now,
+			ID:              "room_test",
+			Name:            "临时房间",
+			InviteCode:      "ABC123",
+			LiveKitRoomName: "lk_room_test",
+			State:           domain.RoomStateActive,
+			CreatedAt:       now,
 		},
 		Member: domain.Member{
 			ID:              "mem_test",
@@ -261,7 +262,10 @@ func (c *captureContextRoomCreator) CreateContext(ctx context.Context, input roo
 }
 
 type createRoomResponseBody struct {
-	Room struct {
+	RoomSessionToken string `json:"room_session_token"`
+	LiveKitURL       string `json:"livekit_url"`
+	LiveKitToken     string `json:"livekit_token"`
+	Room             struct {
 		ID          string     `json:"id"`
 		Name        string     `json:"name"`
 		InviteCode  string     `json:"invite_code"`

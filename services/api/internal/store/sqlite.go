@@ -76,6 +76,28 @@ func (r *Repository) FindRoomByInviteCode(ctx context.Context, inviteCode string
 	return modelToRoom(model), nil
 }
 
+func (r *Repository) FindRoomByID(ctx context.Context, roomID string) (domain.Room, error) {
+	if r == nil || r.db == nil {
+		return domain.Room{}, errors.New("store repository requires a database")
+	}
+	model, err := findRoomByID(r.db.WithContext(ctx), roomID)
+	if err != nil {
+		return domain.Room{}, err
+	}
+	return modelToRoom(model), nil
+}
+
+func (r *Repository) FindMemberByRoomAndID(ctx context.Context, roomID string, memberID string) (domain.Member, error) {
+	if r == nil || r.db == nil {
+		return domain.Member{}, errors.New("store repository requires a database")
+	}
+	model, err := findMemberByRoomAndID(r.db.WithContext(ctx), roomID, memberID)
+	if err != nil {
+		return domain.Member{}, err
+	}
+	return modelToMember(model), nil
+}
+
 func (r *Repository) CountRoomMembersByStates(ctx context.Context, roomID string, states []domain.MemberState) (int, error) {
 	if r == nil || r.db == nil {
 		return 0, errors.New("store repository requires a database")

@@ -7,9 +7,11 @@ import (
 )
 
 type routerConfig struct {
-	roomCreator roomCreator
-	roomJoiner  roomJoiner
-	roomLeaver  roomLeaver
+	roomCreator      roomCreator
+	roomJoiner       roomJoiner
+	roomLeaver       roomLeaver
+	roomAuthorizer   roomMemberAuthorizer
+	credentialConfig CredentialConfig
 }
 
 type RouterOption func(*routerConfig)
@@ -32,6 +34,18 @@ func WithRoomLeaver(roomLeaver roomLeaver) RouterOption {
 	}
 }
 
+func WithRoomMemberAuthorizer(roomAuthorizer roomMemberAuthorizer) RouterOption {
+	return func(config *routerConfig) {
+		config.roomAuthorizer = roomAuthorizer
+	}
+}
+
+func WithCredentialConfig(credentialConfig CredentialConfig) RouterOption {
+	return func(config *routerConfig) {
+		config.credentialConfig = credentialConfig
+	}
+}
+
 func NewRouter(options ...RouterOption) *gin.Engine {
 	config := routerConfig{}
 	for _, option := range options {
@@ -43,8 +57,8 @@ func NewRouter(options ...RouterOption) *gin.Engine {
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-	if config.roomCreator != nil || config.roomJoiner != nil || config.roomLeaver != nil {
-		handlers := NewHandlers(config.roomCreator, config.roomJoiner, config.roomLeaver)
+	if config.roomCreator != nil || config.roomJoiner != nil || config.roomLeaver != nil || config.roomAuthorizer != nil {
+		handlers := NewHandlers(config.roomCreator, config.roomJoiner, config.roomLeaver, config.roomAuthorizer, config.credentialConfig)
 		v1 := router.Group("/v1")
 		if config.roomCreator != nil {
 			v1.POST("/rooms", handlers.CreateRoom)
@@ -54,6 +68,9 @@ func NewRouter(options ...RouterOption) *gin.Engine {
 		}
 		if config.roomLeaver != nil {
 			v1.POST("/rooms/:room_id/leave", handlers.LeaveRoom)
+		}
+		if config.roomAuthorizer != nil {
+			v1.POST("/rooms/:room_id/livekit-token", handlers.FreshLiveKitToken)
 		}
 	}
 	return router

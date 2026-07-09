@@ -167,7 +167,7 @@ func TestLeaveRoomIntegrationAllowsJoinBeforeExpiryAndClearsRetention(t *testing
 		"avatar_id":    "avatar_08",
 	})
 	if joinResponse.Code != http.StatusOK {
-		t.Fatalf("POST join retained status = %d, want %d, body: %s", joinResponse.Code, http.StatusOK, joinResponse.Body.String())
+		t.Fatalf("POST join retained status = %d, want %d, body_bytes=%d", joinResponse.Code, http.StatusOK, joinResponse.Body.Len())
 	}
 	joined := decodeCreateRoomResponse(t, joinResponse)
 	if joined.Room.LastEmptyAt != nil || joined.Room.ExpiresAt != nil {
@@ -216,7 +216,7 @@ func newLeaveRoomIntegration(t *testing.T) (http.Handler, *store.Repository) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	repository := store.NewRepository(db)
 	roomService := room.NewService(repository, invite.NewGenerator())
-	return NewRouter(WithRoomCreator(roomService), WithRoomJoiner(roomService), WithRoomLeaver(roomService)), repository
+	return NewRouter(WithRoomCreator(roomService), WithRoomJoiner(roomService), WithRoomLeaver(roomService), WithCredentialConfig(testCredentialConfig())), repository
 }
 
 func createRoomForLeaveIntegration(t *testing.T, router http.Handler) createRoomResponseBody {
@@ -228,7 +228,7 @@ func createRoomForLeaveIntegration(t *testing.T, router http.Handler) createRoom
 		"room_name":    "今晚开黑",
 	})
 	if createResponse.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/rooms status = %d, want %d, body: %s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", createResponse.Code, http.StatusCreated, createResponse.Body.Len())
 	}
 	return decodeCreateRoomResponse(t, createResponse)
 }

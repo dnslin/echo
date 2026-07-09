@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/credential-guidelines.md", "reason": "Credential token contracts, LiveKit grants, and no-token-log rules"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "API startup and documented ECHO env key contracts"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Backend logging safety area for sensitive values"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "HTTP error envelope and status-code behavior"}
+{"file": ".trellis/tasks/archive/2026-07/07-09-issue-13-room-livekit-tokens/research/livekit-token-go.md", "reason": "LiveKit Go token generation research"}

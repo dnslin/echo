@@ -9,10 +9,12 @@ import (
 	"echo/services/api/internal/invite"
 	"echo/services/api/internal/room"
 	"echo/services/api/internal/store"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func main() {
-	cfg := config.Default()
+	cfg := config.FromEnv()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	db, err := store.OpenSQLite(cfg.DatabasePath)
@@ -20,12 +22,29 @@ func main() {
 		logger.Error("database open failed", "error", err.Error())
 		os.Exit(1)
 	}
-	roomService := room.NewService(store.NewRepository(db), invite.NewGenerator())
-	router := httpapi.NewRouter(httpapi.WithRoomCreator(roomService), httpapi.WithRoomJoiner(roomService), httpapi.WithRoomLeaver(roomService))
+	router := newRouter(cfg, db)
 
 	logger.Info("api starting", "addr", cfg.HTTPAddr)
 	if err := router.Run(cfg.HTTPAddr); err != nil {
 		logger.Error("api stopped", "error", err.Error())
 		os.Exit(1)
 	}
+}
+
+func newRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
+	roomService := room.NewService(store.NewRepository(db), invite.NewGenerator())
+	return httpapi.NewRouter(
+		httpapi.WithRoomCreator(roomService),
+		httpapi.WithRoomJoiner(roomService),
+		httpapi.WithRoomLeaver(roomService),
+		httpapi.WithRoomMemberAuthorizer(roomService),
+		httpapi.WithCredentialConfig(httpapi.CredentialConfig{
+			LiveKitURL:          cfg.LiveKitURL,
+			LiveKitAPIKey:       cfg.LiveKitAPIKey,
+			LiveKitAPISecret:    cfg.LiveKitAPISecret,
+			RoomSessionSecret:   cfg.RoomSessionSecret,
+			RoomSessionTokenTTL: cfg.RoomSessionTokenTTL,
+			LiveKitTokenTTL:     cfg.LiveKitTokenTTL,
+		}),
+	)
 }

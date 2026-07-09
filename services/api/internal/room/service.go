@@ -33,6 +33,7 @@ var (
 	ErrMemberNotFound             = errors.New("member not found")
 	ErrRoomExpired                = errors.New("room expired")
 	ErrRoomFull                   = errors.New("room full")
+	ErrMemberNotActive            = errors.New("member not active")
 )
 
 type Repository interface {
@@ -50,6 +51,11 @@ type leaveRepository interface {
 
 type expiryRepository interface {
 	ExpireEmptyRooms(ctx context.Context, now time.Time, retention time.Duration) (int, error)
+}
+
+type authorizeRepository interface {
+	FindRoomByID(ctx context.Context, roomID string) (domain.Room, error)
+	FindMemberByRoomAndID(ctx context.Context, roomID string, memberID string) (domain.Member, error)
 }
 
 type InviteGenerator interface {
@@ -95,6 +101,16 @@ type LeaveInput struct {
 }
 
 type LeaveResult struct {
+	Room   domain.Room
+	Member domain.Member
+}
+
+type AuthorizeMemberInput struct {
+	RoomID   string
+	MemberID string
+}
+
+type AuthorizeMemberResult struct {
 	Room   domain.Room
 	Member domain.Member
 }
@@ -257,6 +273,49 @@ func (s *Service) ExpireEmptyRoomsContext(ctx context.Context) (int, error) {
 	return repository.ExpireEmptyRooms(ctx, s.now().UTC(), emptyRoomRetention)
 }
 
+func (s *Service) AuthorizeMemberContext(ctx context.Context, input AuthorizeMemberInput) (AuthorizeMemberResult, error) {
+	normalized, err := validateLeaveInput(LeaveInput{RoomID: input.RoomID, MemberID: input.MemberID})
+	if err != nil {
+		return AuthorizeMemberResult{}, err
+	}
+	if s == nil || s.repository == nil {
+		return AuthorizeMemberResult{}, errors.New("room service is not configured")
+	}
+	repository, ok := s.repository.(authorizeRepository)
+	if !ok {
+		return AuthorizeMemberResult{}, errors.New("room repository does not support member authorization")
+	}
+
+	roomValue, err := repository.FindRoomByID(ctx, normalized.roomID)
+	if err != nil {
+		if errors.Is(err, domain.ErrRoomNotFound) {
+			return AuthorizeMemberResult{}, ErrRoomNotFound
+		}
+		return AuthorizeMemberResult{}, err
+	}
+	if roomValue.ID != normalized.roomID {
+		return AuthorizeMemberResult{}, ErrRoomNotFound
+	}
+	if roomValue.State == domain.RoomStateExpired {
+		return AuthorizeMemberResult{}, ErrRoomExpired
+	}
+
+	member, err := repository.FindMemberByRoomAndID(ctx, normalized.roomID, normalized.memberID)
+	if err != nil {
+		if errors.Is(err, domain.ErrMemberNotFound) {
+			return AuthorizeMemberResult{}, ErrMemberNotFound
+		}
+		return AuthorizeMemberResult{}, err
+	}
+	if member.RoomID != normalized.roomID || member.ID != normalized.memberID {
+		return AuthorizeMemberResult{}, ErrMemberNotFound
+	}
+	if !memberStateIn(member.State, activeMemberStates()) {
+		return AuthorizeMemberResult{}, ErrMemberNotActive
+	}
+	return AuthorizeMemberResult{Room: roomValue, Member: member}, nil
+}
+
 type normalizedCreateInput struct {
 	anonymousID string
 	nickname    string
@@ -414,6 +473,15 @@ func buildJoinMember(input normalizedJoinInput, roomID string, memberID string, 
 
 func activeMemberStates() []domain.MemberState {
 	return []domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting}
+}
+
+func memberStateIn(state domain.MemberState, states []domain.MemberState) bool {
+	for _, candidate := range states {
+		if state == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func generateID(prefix string) (string, error) {
