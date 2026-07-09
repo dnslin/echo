@@ -191,7 +191,7 @@ func TestJoinRoomRejectsFullRoom(t *testing.T) {
 
 func TestJoinRoomPassesRequestContext(t *testing.T) {
 	joiner := &captureContextRoomJoiner{}
-	router := NewRouter(WithRoomJoiner(joiner))
+	router := NewRouter(WithRoomJoiner(joiner), WithCredentialConfig(testCredentialConfig()))
 	request := httptest.NewRequest(http.MethodPost, "/v1/rooms/join", strings.NewReader(`{"invite_code":"ABC123","anonymous_id":"anon_local_456","nickname":"Alice","avatar_id":"avatar_08"}`))
 	request.Header.Set("Content-Type", "application/json")
 	ctx := context.WithValue(request.Context(), testContextKey{}, "join-request-context")
@@ -220,7 +220,7 @@ func TestJoinRoomRejectsMalformedAndOversizedRequestBeforeService(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			joiner := &captureContextRoomJoiner{}
-			router := NewRouter(WithRoomJoiner(joiner))
+			router := NewRouter(WithRoomJoiner(joiner), WithCredentialConfig(testCredentialConfig()))
 			request := httptest.NewRequest(http.MethodPost, "/v1/rooms/join", strings.NewReader(tt.body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -237,7 +237,7 @@ func TestJoinRoomRejectsMalformedAndOversizedRequestBeforeService(t *testing.T) 
 
 func TestJoinRoomMapsUnexpectedServiceError(t *testing.T) {
 	joiner := &captureContextRoomJoiner{err: errors.New("store failed")}
-	router := NewRouter(WithRoomJoiner(joiner))
+	router := NewRouter(WithRoomJoiner(joiner), WithCredentialConfig(testCredentialConfig()))
 	response := performJSONRequest(t, router, http.MethodPost, "/v1/rooms/join", map[string]string{
 		"invite_code":  "ABC123",
 		"anonymous_id": "anon_local_456",
@@ -261,7 +261,7 @@ func newJoinRoomIntegration(t *testing.T) (http.Handler, *store.Repository) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	repository := store.NewRepository(db)
 	roomService := room.NewService(repository, invite.NewGenerator())
-	return NewRouter(WithRoomCreator(roomService), WithRoomJoiner(roomService)), repository
+	return NewRouter(WithRoomCreator(roomService), WithRoomJoiner(roomService), WithCredentialConfig(testCredentialConfig())), repository
 }
 
 func decodeCreateRoomResponse(t *testing.T, response *httptest.ResponseRecorder) createRoomResponseBody {
@@ -343,11 +343,12 @@ func (c *captureContextRoomJoiner) JoinContext(ctx context.Context, input room.J
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	return room.JoinResult{
 		Room: domain.Room{
-			ID:         "room_test",
-			Name:       "临时房间",
-			InviteCode: "ABC123",
-			State:      domain.RoomStateActive,
-			CreatedAt:  now,
+			ID:              "room_test",
+			Name:            "临时房间",
+			InviteCode:      "ABC123",
+			LiveKitRoomName: "lk_room_test",
+			State:           domain.RoomStateActive,
+			CreatedAt:       now,
 		},
 		Member: domain.Member{
 			ID:              "mem_join_test",

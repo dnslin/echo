@@ -21,7 +21,20 @@ func main() {
 		os.Exit(1)
 	}
 	roomService := room.NewService(store.NewRepository(db), invite.NewGenerator())
-	router := httpapi.NewRouter(httpapi.WithRoomCreator(roomService), httpapi.WithRoomJoiner(roomService), httpapi.WithRoomLeaver(roomService))
+	router := httpapi.NewRouter(
+		httpapi.WithRoomCreator(roomService),
+		httpapi.WithRoomJoiner(roomService),
+		httpapi.WithRoomLeaver(roomService),
+		httpapi.WithRoomMemberAuthorizer(roomService),
+		httpapi.WithCredentialConfig(httpapi.CredentialConfig{
+			LiveKitURL:          cfg.LiveKitURL,
+			LiveKitAPIKey:       cfg.LiveKitAPIKey,
+			LiveKitAPISecret:    cfg.LiveKitAPISecret,
+			RoomSessionSecret:   cfg.RoomSessionSecret,
+			RoomSessionTokenTTL: cfg.RoomSessionTokenTTL,
+			LiveKitTokenTTL:     cfg.LiveKitTokenTTL,
+		}),
+	)
 
 	logger.Info("api starting", "addr", cfg.HTTPAddr)
 	if err := router.Run(cfg.HTTPAddr); err != nil {

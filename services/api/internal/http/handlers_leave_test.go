@@ -216,7 +216,7 @@ func newLeaveRoomIntegration(t *testing.T) (http.Handler, *store.Repository) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	repository := store.NewRepository(db)
 	roomService := room.NewService(repository, invite.NewGenerator())
-	return NewRouter(WithRoomCreator(roomService), WithRoomJoiner(roomService), WithRoomLeaver(roomService)), repository
+	return NewRouter(WithRoomCreator(roomService), WithRoomJoiner(roomService), WithRoomLeaver(roomService), WithCredentialConfig(testCredentialConfig())), repository
 }
 
 func createRoomForLeaveIntegration(t *testing.T, router http.Handler) createRoomResponseBody {

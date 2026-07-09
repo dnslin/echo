@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"echo/services/api/internal/domain"
+	apilivekit "echo/services/api/internal/livekit"
 	"echo/services/api/internal/room"
+	"echo/services/api/internal/session"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,14 +28,30 @@ type roomLeaver interface {
 	LeaveContext(ctx context.Context, input room.LeaveInput) (room.LeaveResult, error)
 }
 
-type Handlers struct {
-	roomCreator roomCreator
-	roomJoiner  roomJoiner
-	roomLeaver  roomLeaver
+type roomMemberAuthorizer interface {
+	AuthorizeMemberContext(ctx context.Context, input room.AuthorizeMemberInput) (room.AuthorizeMemberResult, error)
 }
 
-func NewHandlers(roomCreator roomCreator, roomJoiner roomJoiner, roomLeaver roomLeaver) *Handlers {
-	return &Handlers{roomCreator: roomCreator, roomJoiner: roomJoiner, roomLeaver: roomLeaver}
+type CredentialConfig struct {
+	LiveKitURL          string
+	LiveKitAPIKey       string
+	LiveKitAPISecret    string
+	RoomSessionSecret   string
+	RoomSessionTokenTTL time.Duration
+	LiveKitTokenTTL     time.Duration
+	Now                 func() time.Time
+}
+
+type Handlers struct {
+	roomCreator      roomCreator
+	roomJoiner       roomJoiner
+	roomLeaver       roomLeaver
+	roomAuthorizer   roomMemberAuthorizer
+	credentialConfig CredentialConfig
+}
+
+func NewHandlers(roomCreator roomCreator, roomJoiner roomJoiner, roomLeaver roomLeaver, roomAuthorizer roomMemberAuthorizer, credentialConfig CredentialConfig) *Handlers {
+	return &Handlers{roomCreator: roomCreator, roomJoiner: roomJoiner, roomLeaver: roomLeaver, roomAuthorizer: roomAuthorizer, credentialConfig: credentialConfig}
 }
 
 type createRoomRequest struct {
@@ -54,8 +73,16 @@ type leaveRoomRequest struct {
 }
 
 type createRoomResponse struct {
-	Room   roomResponse   `json:"room"`
-	Member memberResponse `json:"member"`
+	Room             roomResponse   `json:"room"`
+	Member           memberResponse `json:"member"`
+	RoomSessionToken string         `json:"room_session_token"`
+	LiveKitURL       string         `json:"livekit_url"`
+	LiveKitToken     string         `json:"livekit_token"`
+}
+
+type liveKitTokenResponse struct {
+	LiveKitURL   string `json:"livekit_url"`
+	LiveKitToken string `json:"livekit_token"`
 }
 
 type roomResponse struct {
@@ -101,6 +128,11 @@ func (h *Handlers) CreateRoom(c *gin.Context) {
 		return
 	}
 
+	if err := validateCredentialConfig(h.credentialConfig); err != nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return
+	}
+
 	result, err := h.roomCreator.CreateContext(c.Request.Context(), room.CreateInput{
 		AnonymousID: request.AnonymousID,
 		Nickname:    request.Nickname,
@@ -112,7 +144,12 @@ func (h *Handlers) CreateRoom(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, toCreateRoomResponse(result))
+	response, err := h.toRoomMemberCredentialResponse(result.Room, result.Member)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return
+	}
+	c.JSON(http.StatusCreated, response)
 }
 
 func (h *Handlers) JoinRoom(c *gin.Context) {
@@ -121,6 +158,11 @@ func (h *Handlers) JoinRoom(c *gin.Context) {
 	var request joinRoomRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "请求格式无效")
+		return
+	}
+
+	if err := validateCredentialConfig(h.credentialConfig); err != nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
 		return
 	}
 
@@ -135,7 +177,12 @@ func (h *Handlers) JoinRoom(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, toJoinRoomResponse(result))
+	response, err := h.toRoomMemberCredentialResponse(result.Room, result.Member)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *Handlers) LeaveRoom(c *gin.Context) {
@@ -159,12 +206,84 @@ func (h *Handlers) LeaveRoom(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func toCreateRoomResponse(result room.CreateResult) createRoomResponse {
-	return toRoomMemberResponse(result.Room, result.Member)
+func (h *Handlers) FreshLiveKitToken(c *gin.Context) {
+	if err := validateCredentialConfig(h.credentialConfig); err != nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return
+	}
+	token, ok := bearerToken(c.GetHeader("Authorization"))
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "invalid_room_session", "连接凭证无效，请重新进入房间")
+		return
+	}
+	claims, err := session.Verify(session.VerifyInput{Secret: h.credentialConfig.RoomSessionSecret, Token: token, Now: h.now()})
+	if err != nil {
+		writeSessionError(c, err)
+		return
+	}
+	pathRoomID := strings.TrimSpace(c.Param("room_id"))
+	if claims.RoomID != pathRoomID {
+		writeError(c, http.StatusForbidden, "room_session_mismatch", "连接凭证与房间不匹配")
+		return
+	}
+	if h.roomAuthorizer == nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return
+	}
+	result, err := h.roomAuthorizer.AuthorizeMemberContext(c.Request.Context(), room.AuthorizeMemberInput{RoomID: claims.RoomID, MemberID: claims.MemberID})
+	if err != nil {
+		writeCredentialRoomError(c, err)
+		return
+	}
+	liveKitToken, err := h.liveKitToken(result.Room, result.Member)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return
+	}
+	c.JSON(http.StatusOK, liveKitTokenResponse{LiveKitURL: strings.TrimSpace(h.credentialConfig.LiveKitURL), LiveKitToken: liveKitToken})
 }
 
-func toJoinRoomResponse(result room.JoinResult) createRoomResponse {
-	return toRoomMemberResponse(result.Room, result.Member)
+func (h *Handlers) toRoomMemberCredentialResponse(roomValue domain.Room, memberValue domain.Member) (createRoomResponse, error) {
+	if err := validateCredentialConfig(h.credentialConfig); err != nil {
+		return createRoomResponse{}, err
+	}
+	roomSessionToken, _, err := session.Sign(session.SignInput{
+		Secret:   h.credentialConfig.RoomSessionSecret,
+		RoomID:   roomValue.ID,
+		MemberID: memberValue.ID,
+		Now:      h.now(),
+		TTL:      h.credentialConfig.RoomSessionTokenTTL,
+	})
+	if err != nil {
+		return createRoomResponse{}, err
+	}
+	liveKitToken, err := h.liveKitToken(roomValue, memberValue)
+	if err != nil {
+		return createRoomResponse{}, err
+	}
+	response := toRoomMemberResponse(roomValue, memberValue)
+	response.RoomSessionToken = roomSessionToken
+	response.LiveKitURL = strings.TrimSpace(h.credentialConfig.LiveKitURL)
+	response.LiveKitToken = liveKitToken
+	return response, nil
+}
+
+func (h *Handlers) liveKitToken(roomValue domain.Room, memberValue domain.Member) (string, error) {
+	return apilivekit.JoinToken(apilivekit.JoinTokenInput{
+		APIKey:    h.credentialConfig.LiveKitAPIKey,
+		APISecret: h.credentialConfig.LiveKitAPISecret,
+		RoomName:  roomValue.LiveKitRoomName,
+		Identity:  memberValue.LiveKitIdentity,
+		Name:      memberValue.Nickname,
+		ValidFor:  h.credentialConfig.LiveKitTokenTTL,
+	})
+}
+
+func (h *Handlers) now() time.Time {
+	if h.credentialConfig.Now != nil {
+		return h.credentialConfig.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func toRoomMemberResponse(roomValue domain.Room, memberValue domain.Member) createRoomResponse {
@@ -195,6 +314,25 @@ func toRoomMemberResponse(roomValue domain.Room, memberValue domain.Member) crea
 	}
 }
 
+func validateCredentialConfig(config CredentialConfig) error {
+	if strings.TrimSpace(config.LiveKitURL) == "" || strings.TrimSpace(config.LiveKitAPIKey) == "" || strings.TrimSpace(config.LiveKitAPISecret) == "" || strings.TrimSpace(config.RoomSessionSecret) == "" {
+		return errors.New("credential config is incomplete")
+	}
+	if config.RoomSessionTokenTTL <= 0 || config.LiveKitTokenTTL <= 0 {
+		return errors.New("credential ttl config is invalid")
+	}
+	return nil
+}
+
+func bearerToken(header string) (string, bool) {
+	header = strings.TrimSpace(header)
+	if len(header) < len("Bearer ") || !strings.EqualFold(header[:len("Bearer")], "Bearer") || header[len("Bearer")] != ' ' {
+		return "", false
+	}
+	token := strings.TrimSpace(header[len("Bearer "):])
+	return token, token != ""
+}
+
 func writeRoomError(c *gin.Context, err error) {
 	var validationErr *room.ValidationError
 	if errors.As(err, &validationErr) {
@@ -222,6 +360,35 @@ func writeRoomError(c *gin.Context, err error) {
 		return
 	}
 	writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+}
+
+func writeCredentialRoomError(c *gin.Context, err error) {
+	var validationErr *room.ValidationError
+	if errors.As(err, &validationErr) {
+		writeError(c, http.StatusBadRequest, validationErr.Code, validationErr.Message)
+		return
+	}
+	if errors.Is(err, room.ErrRoomNotFound) {
+		writeError(c, http.StatusNotFound, "room_not_found", "房间不存在或已失效")
+		return
+	}
+	if errors.Is(err, room.ErrRoomExpired) {
+		writeError(c, http.StatusGone, "room_expired", "该房间已过期，请让朋友重新创建")
+		return
+	}
+	if errors.Is(err, room.ErrMemberNotFound) || errors.Is(err, room.ErrMemberNotActive) {
+		writeError(c, http.StatusForbidden, "member_not_active", "成员不在房间中")
+		return
+	}
+	writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+}
+
+func writeSessionError(c *gin.Context, err error) {
+	if errors.Is(err, session.ErrExpiredToken) {
+		writeError(c, http.StatusUnauthorized, "room_session_expired", "连接凭证已过期，请重新进入房间")
+		return
+	}
+	writeError(c, http.StatusUnauthorized, "invalid_room_session", "连接凭证无效，请重新进入房间")
 }
 
 func writeError(c *gin.Context, status int, code string, message string) {
