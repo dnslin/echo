@@ -422,3 +422,36 @@ Fixed PR #34 lifecycle review findings by moving due-retained-room expiry into s
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Issue #13 room session and LiveKit credentials
+
+**Date**: 2026-07-09
+**Task**: Issue #13 room session and LiveKit credentials
+**Branch**: `issue-13-room-livekit-tokens`
+
+### Summary
+
+Implemented room session credentials, LiveKit join token issuance, fresh token endpoint, OpenAPI contracts, backend credential specs, and passing backend validation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6be67dc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
