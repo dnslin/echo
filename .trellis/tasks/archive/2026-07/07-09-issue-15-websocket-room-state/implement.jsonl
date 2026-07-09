@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend pre-development checklist and package entry point for API/WebSocket work."}
+{"file":".trellis/spec/backend/credential-guidelines.md","reason":"Room session token, product-member authorization, and token logging rules apply to WebSocket handshake authentication."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Snapshot and join/leave broadcasts depend on SQLite room/member lifecycle and active-member semantics."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Router/startup wiring and module dependency changes must follow backend structure and config conventions."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Public error envelopes and stable error mapping are central to WebSocket pre-upgrade rejection behavior."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"WebSocket token query parameters and credentials must not be logged."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"WebSocket message envelopes cross HTTP/service/store/client contract boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Implementation should reuse token, authorization, and payload projection logic rather than duplicate contracts."}
+{"file":".trellis/tasks/07-09-issue-15-websocket-room-state/research/planning-evidence.md","reason":"Curated evidence and anchors for Issue #15 scope and existing implementation seams."}

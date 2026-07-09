@@ -5,6 +5,18 @@ import (
 	"time"
 )
 
+func TestDefaultWebSocketOriginPatternsAreExplicitAndNotWildcard(t *testing.T) {
+	cfg := Default()
+	if len(cfg.WebSocketOriginPatterns) == 0 {
+		t.Fatalf("WebSocketOriginPatterns is empty, want explicit local/WebView2 defaults")
+	}
+	for _, pattern := range cfg.WebSocketOriginPatterns {
+		if pattern == "*" {
+			t.Fatalf("WebSocketOriginPatterns contains wildcard '*', want bounded origins")
+		}
+	}
+}
+
 func TestDefaultCredentialTTLsAreExplicit(t *testing.T) {
 	cfg := Default()
 	if cfg.RoomSessionTokenTTL != 2*time.Hour {
@@ -22,6 +34,7 @@ func TestFromEnvLoadsDocumentedEnvironmentValues(t *testing.T) {
 	t.Setenv("ECHO_LIVEKIT_API_KEY", "env-livekit-key")
 	t.Setenv("ECHO_LIVEKIT_API_SECRET", "env-livekit-secret")
 	t.Setenv("ECHO_ROOM_SESSION_SECRET", "env-room-session-secret")
+	t.Setenv("ECHO_WS_ORIGIN_PATTERNS", "https://client.example, http://localhost:5173 ")
 	t.Setenv("ECHO_LOG_DIR", "./env-logs")
 
 	cfg := FromEnv()
@@ -46,6 +59,15 @@ func TestFromEnvLoadsDocumentedEnvironmentValues(t *testing.T) {
 	}
 	if cfg.LogDir != "./env-logs" {
 		t.Fatalf("LogDir = %q, want env value", cfg.LogDir)
+	}
+	wantOrigins := []string{"https://client.example", "http://localhost:5173"}
+	if len(cfg.WebSocketOriginPatterns) != len(wantOrigins) {
+		t.Fatalf("WebSocketOriginPatterns = %#v, want %#v", cfg.WebSocketOriginPatterns, wantOrigins)
+	}
+	for i, want := range wantOrigins {
+		if cfg.WebSocketOriginPatterns[i] != want {
+			t.Fatalf("WebSocketOriginPatterns[%d] = %q, want %q", i, cfg.WebSocketOriginPatterns[i], want)
+		}
 	}
 	if cfg.RoomSessionTokenTTL != 2*time.Hour {
 		t.Fatalf("RoomSessionTokenTTL = %v, want 2h", cfg.RoomSessionTokenTTL)

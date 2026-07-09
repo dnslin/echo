@@ -105,6 +105,28 @@ func (r *Repository) CountRoomMembersByStates(ctx context.Context, roomID string
 	return countRoomMembersByStates(r.db.WithContext(ctx), roomID, states)
 }
 
+func (r *Repository) ListRoomMembersByStates(ctx context.Context, roomID string, states []domain.MemberState) ([]domain.Member, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store repository requires a database")
+	}
+	if len(states) == 0 {
+		return []domain.Member{}, nil
+	}
+	stateValues := make([]string, 0, len(states))
+	for _, state := range states {
+		stateValues = append(stateValues, string(state))
+	}
+	var models []MemberModel
+	if err := r.db.WithContext(ctx).Where("room_id = ? AND state IN ?", roomID, stateValues).Order("joined_at ASC").Order("id ASC").Find(&models).Error; err != nil {
+		return nil, err
+	}
+	members := make([]domain.Member, 0, len(models))
+	for _, model := range models {
+		members = append(members, modelToMember(model))
+	}
+	return members, nil
+}
+
 func findRoomByID(db *gorm.DB, roomID string) (RoomModel, error) {
 	var model RoomModel
 	if err := db.First(&model, "id = ?", roomID).Error; err != nil {

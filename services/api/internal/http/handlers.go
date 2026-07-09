@@ -32,6 +32,11 @@ type roomMemberAuthorizer interface {
 	AuthorizeMemberContext(ctx context.Context, input room.AuthorizeMemberInput) (room.AuthorizeMemberResult, error)
 }
 
+type roomEventNotifier interface {
+	NotifyMemberJoined(ctx context.Context, roomValue domain.Room, memberValue domain.Member)
+	NotifyMemberLeft(ctx context.Context, roomValue domain.Room, memberValue domain.Member)
+}
+
 type CredentialConfig struct {
 	LiveKitURL          string
 	LiveKitAPIKey       string
@@ -43,15 +48,16 @@ type CredentialConfig struct {
 }
 
 type Handlers struct {
-	roomCreator      roomCreator
-	roomJoiner       roomJoiner
-	roomLeaver       roomLeaver
-	roomAuthorizer   roomMemberAuthorizer
-	credentialConfig CredentialConfig
+	roomCreator       roomCreator
+	roomJoiner        roomJoiner
+	roomLeaver        roomLeaver
+	roomAuthorizer    roomMemberAuthorizer
+	roomEventNotifier roomEventNotifier
+	credentialConfig  CredentialConfig
 }
 
-func NewHandlers(roomCreator roomCreator, roomJoiner roomJoiner, roomLeaver roomLeaver, roomAuthorizer roomMemberAuthorizer, credentialConfig CredentialConfig) *Handlers {
-	return &Handlers{roomCreator: roomCreator, roomJoiner: roomJoiner, roomLeaver: roomLeaver, roomAuthorizer: roomAuthorizer, credentialConfig: credentialConfig}
+func NewHandlers(roomCreator roomCreator, roomJoiner roomJoiner, roomLeaver roomLeaver, roomAuthorizer roomMemberAuthorizer, roomEventNotifier roomEventNotifier, credentialConfig CredentialConfig) *Handlers {
+	return &Handlers{roomCreator: roomCreator, roomJoiner: roomJoiner, roomLeaver: roomLeaver, roomAuthorizer: roomAuthorizer, roomEventNotifier: roomEventNotifier, credentialConfig: credentialConfig}
 }
 
 type createRoomRequest struct {
@@ -182,6 +188,9 @@ func (h *Handlers) JoinRoom(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
 		return
 	}
+	if h.roomEventNotifier != nil {
+		h.roomEventNotifier.NotifyMemberJoined(c.Request.Context(), result.Room, result.Member)
+	}
 	c.JSON(http.StatusOK, response)
 }
 
@@ -194,16 +203,63 @@ func (h *Handlers) LeaveRoom(c *gin.Context) {
 		return
 	}
 
-	_, err := h.roomLeaver.LeaveContext(c.Request.Context(), room.LeaveInput{
-		RoomID:   c.Param("room_id"),
-		MemberID: request.MemberID,
+	pathRoomID := strings.TrimSpace(c.Param("room_id"))
+	memberID := strings.TrimSpace(request.MemberID)
+	if pathRoomID == "" {
+		writeError(c, http.StatusBadRequest, "invalid_room_id", "房间标识不能为空")
+		return
+	}
+	if memberID == "" {
+		writeError(c, http.StatusBadRequest, "invalid_member_id", "成员标识不能为空")
+		return
+	}
+	if err := h.authorizeLeave(c, pathRoomID, memberID); err != nil {
+		return
+	}
+
+	result, err := h.roomLeaver.LeaveContext(c.Request.Context(), room.LeaveInput{
+		RoomID:   pathRoomID,
+		MemberID: memberID,
 	})
 	if err != nil {
 		writeRoomError(c, err)
 		return
 	}
+	if h.roomEventNotifier != nil {
+		h.roomEventNotifier.NotifyMemberLeft(c.Request.Context(), result.Room, result.Member)
+	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handlers) authorizeLeave(c *gin.Context, pathRoomID string, memberID string) error {
+	token, ok := bearerToken(c.GetHeader("Authorization"))
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "invalid_room_session", "连接凭证无效，请重新进入房间")
+		return errors.New("missing room session")
+	}
+	if strings.TrimSpace(h.credentialConfig.RoomSessionSecret) == "" {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return errors.New("room session config is incomplete")
+	}
+	claims, err := session.Verify(session.VerifyInput{Secret: h.credentialConfig.RoomSessionSecret, Token: token, Now: h.now()})
+	if err != nil {
+		writeSessionError(c, err)
+		return err
+	}
+	if claims.RoomID != pathRoomID || claims.MemberID != memberID {
+		writeError(c, http.StatusForbidden, "room_session_mismatch", "连接凭证与房间不匹配")
+		return errors.New("room session mismatch")
+	}
+	if h.roomAuthorizer == nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", "服务器错误")
+		return errors.New("room authorizer is not configured")
+	}
+	if _, err := h.roomAuthorizer.AuthorizeMemberContext(c.Request.Context(), room.AuthorizeMemberInput{RoomID: claims.RoomID, MemberID: claims.MemberID}); err != nil {
+		writeCredentialRoomError(c, err)
+		return err
+	}
+	return nil
 }
 
 func (h *Handlers) FreshLiveKitToken(c *gin.Context) {

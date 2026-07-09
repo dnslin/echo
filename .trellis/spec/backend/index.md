@@ -18,6 +18,7 @@ This directory contains executable backend contracts for the echo API service. F
 | [Invite Guidelines](./invite-guidelines.md) | Invite-code generation and normalization contracts | Active: create/join room invite codes |
 | [Database Guidelines](./database-guidelines.md) | GORM/SQLite persistence contracts and room/member repository rules | Active: API SQLite persistence, join, leave, and empty-room lifecycle |
 | [Credential Guidelines](./credential-guidelines.md) | Room session token, LiveKit token, credential response, and authorization contracts | Active: room credentials and LiveKit token issuance |
+| [WebSocket Room-State Guidelines](./websocket-room-state-guidelines.md) | Room-state WebSocket handshake, snapshot, broadcast, heartbeat, and query-token redaction contracts | Active: backend room-state WebSocket |
 | [Error Handling](./error-handling.md) | HTTP validation error envelope and create/join/leave-room error mapping | Active: room HTTP validation |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |

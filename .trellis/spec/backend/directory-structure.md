@@ -61,8 +61,9 @@ GET /healthz -> 200 application/json
   - `ECHO_LIVEKIT_API_KEY`
   - `ECHO_LIVEKIT_API_SECRET`
   - `ECHO_ROOM_SESSION_SECRET`
+  - `ECHO_WS_ORIGIN_PATTERNS`
   - `ECHO_LOG_DIR`
-- `Default()` owns safe local defaults and explicit TTL defaults. `FromEnv()` starts from `Default()` and overlays non-empty env values. Runtime `cmd/api` startup must use `FromEnv()`, not raw `Default()`, when wiring externally documented config into handlers.
+- `Default()` owns safe local defaults, bounded WebSocket origin defaults, and explicit TTL defaults. `FromEnv()` starts from `Default()` and overlays non-empty env values. Runtime `cmd/api` startup must use `FromEnv()`, not raw `Default()`, when wiring externally documented config into handlers.
 - If a dependency requires a newer Go version, keep module/workspace `go` directives aligned with the resolved dependency/toolchain and validate with the effective Go toolchain reported by `go env GOVERSION`.
 
 ### 4. Validation & Error Matrix

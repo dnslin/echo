@@ -58,7 +58,7 @@ type ValidationError struct {
 - `POST /v1/rooms` must cap request-body bytes before JSON binding so oversized input is rejected before service creation starts.
 - Service validation errors return HTTP `400` and preserve the service-provided `Code` and `Message` exactly.
 - Unexpected service/store failures return HTTP `500` with code `internal_error` and message `服务器错误`.
-- `POST /v1/rooms` success returns HTTP `201` and must not include LiveKit token, room session token, join-room result, or WebSocket data.
+- `POST /v1/rooms` success returns HTTP `201` and includes the credential fields defined by [Credential Guidelines](./credential-guidelines.md): `room_session_token`, `livekit_url`, and `livekit_token`; it must not include join-room result, WebSocket data, room-owner controls, account information, or member-history payloads.
 - OpenAPI must document every public error code exposed by the endpoint, including `internal_error` in a `500` response.
 
 ### 4. Validation & Error Matrix
@@ -197,7 +197,7 @@ func (s *Service) JoinContext(ctx context.Context, input room.JoinInput) (room.J
 - `POST /v1/rooms/join` must cap request-body bytes before JSON binding, using the same request-size limit as create-room unless a later spec changes both endpoints.
 - Invalid JSON, oversized request bodies, or binding failure returns HTTP `400` with code `invalid_request` and message `请求格式无效`.
 - Invite-code format errors are service validation errors, not store errors.
-- Join success returns HTTP `200` and must not include LiveKit token, room session token, WebSocket data, room-owner controls, or account information.
+- Join success returns HTTP `200` and includes the credential fields defined by [Credential Guidelines](./credential-guidelines.md): `room_session_token`, `livekit_url`, and `livekit_token`; it must not include WebSocket data, room-owner controls, account information, or member-history payloads.
 - Duplicate nicknames in the same room are allowed and must not be rejected by the HTTP layer.
 - OpenAPI must document every public join error code the handler can return.
 
@@ -297,6 +297,7 @@ Why correct: the service owns product rules, and HTTP owns only transport bindin
 ```http
 POST /v1/rooms/{room_id}/leave
 Content-Type: application/json
+Authorization: Bearer <room_session_token>
 ```
 
 - Leave-room request body:
@@ -329,7 +330,10 @@ func WithRoomLeaver(roomLeaver roomLeaver) RouterOption
 
 - `POST /v1/rooms/{room_id}/leave` must cap request-body bytes before JSON binding, using the same command-body limit as create/join unless a later spec changes all three endpoints.
 - Invalid JSON, oversized request bodies, or binding failure returns HTTP `400` with code `invalid_request` and message `请求格式无效`.
-- The handler passes the path `room_id` and body `member_id` to `LeaveContext`; it must pass `c.Request.Context()` unchanged.
+- The handler requires `Authorization: Bearer <room_session_token>` before mutating product state or notifying WebSocket clients.
+- The room session token must verify successfully, its `room_id` must match path `{room_id}`, and its `member_id` must match request body `member_id`.
+- The handler must authorize the verified room/member through `AuthorizeMemberContext` before calling `LeaveContext`.
+- The handler passes the path `room_id` and body `member_id` to `LeaveContext`; it must pass `c.Request.Context()` unchanged through authorization and leave mutation.
 - Success returns `204 No Content` with no room/member body.
 - Leave success must not include LiveKit token, room session token, WebSocket data, room-owner controls, account information, or member-history payloads.
 - OpenAPI must document every public leave error code the handler can return.
@@ -341,6 +345,10 @@ func WithRoomLeaver(roomLeaver roomLeaver) RouterOption
 | Malformed or oversized JSON | `400` | `invalid_request` | `请求格式无效` |
 | `room_id` blank after trim | `400` | `invalid_room_id` | `房间标识不能为空` |
 | `member_id` blank after trim | `400` | `invalid_member_id` | `成员标识不能为空` |
+| Missing, malformed, tampered, unsupported-version room session token | `401` | `invalid_room_session` | `连接凭证无效，请重新进入房间` |
+| Expired room session token | `401` | `room_session_expired` | `连接凭证已过期，请重新进入房间` |
+| Token `room_id` does not match path `{room_id}` or token `member_id` does not match body `member_id` | `403` | `room_session_mismatch` | `连接凭证与房间不匹配` |
+| Authorized member is disconnected or otherwise inactive | `403` | `member_not_active` | `成员不在房间中` |
 | room row is missing | `404` | `room_not_found` | `房间不存在或已失效` |
 | member row is missing in that room | `404` | `member_not_found` | `成员不在房间中` |
 | room is expired | `410` | `room_expired` | `该房间已过期，请让朋友重新创建` |
@@ -348,22 +356,27 @@ func WithRoomLeaver(roomLeaver roomLeaver) RouterOption
 
 ### 5. Good/Base/Bad Cases
 
-- Good: handler binds `{member_id}`, calls `LeaveContext` with path `room_id`, maps service sentinels to the standard JSON envelope, and returns `204` on success.
-- Base: leave endpoint only changes product lifecycle state; WebSocket `member.left` and LiveKit participant removal are separate future work.
-- Bad: handler directly updates `members.state`, returns plain text errors, returns a body on `204`, or maps missing members to `500`.
+- Good: handler binds `{member_id}`, verifies and authorizes the matching bearer room session token, calls `LeaveContext` with path `room_id`, maps service sentinels to the standard JSON envelope, and returns `204` on success.
+- Base: leave endpoint only changes product lifecycle state; WebSocket `member.left` notification happens only after an authenticated successful leave, and LiveKit participant removal is separate future work.
+- Bad: handler lets one member leave another by body `member_id` alone, directly updates `members.state`, returns plain text errors, returns a body on `204`, or maps missing members to `500`.
 
 ### 6. Tests Required
 
 - Leave-room success HTTP test:
   - create or seed a room with an active member;
-  - call `POST /v1/rooms/{room_id}/leave`;
+  - call `POST /v1/rooms/{room_id}/leave` with that member's bearer room session token;
   - assert HTTP `204` and empty body.
 - Context propagation test:
-  - request context value reaches `LeaveContext`.
+  - request context value reaches `AuthorizeMemberContext` and `LeaveContext`.
 - Validation HTTP tests:
   - malformed body;
   - oversized body does not call the service;
   - blank `member_id` returns `invalid_member_id`.
+- Authorization HTTP tests:
+  - missing bearer token returns `401 invalid_room_session` and does not call `LeaveContext`;
+  - token room/path mismatch returns `403 room_session_mismatch` and does not call `LeaveContext`;
+  - token member/body mismatch returns `403 room_session_mismatch` and does not call `LeaveContext`;
+  - disconnected/inactive authorized member returns `403 member_not_active` and does not call `LeaveContext`.
 - Product error HTTP tests:
   - missing room returns `404 room_not_found`;
   - missing member returns `404 member_not_found`;
@@ -372,7 +385,7 @@ func WithRoomLeaver(roomLeaver roomLeaver) RouterOption
   - leave last active member, then join before expiry succeeds and returns cleared expiry fields;
   - leave last active member, then after expiry join returns `410 room_expired`.
 - Contract check:
-  - `services/api/openapi.yaml` documents `/v1/rooms/{room_id}/leave`, `LeaveRoomRequest`, `204`, `400`, `404`, `410`, `500`, and every returned error code.
+  - `services/api/openapi.yaml` documents `/v1/rooms/{room_id}/leave`, `Authorization: Bearer <room_session_token>`, `LeaveRoomRequest`, `204`, `400`, `401`, `403`, `404`, `410`, `500`, and every returned error code.
 
 ### 7. Wrong vs Correct
 

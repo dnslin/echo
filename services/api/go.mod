@@ -3,6 +3,7 @@ module echo/services/api
 go 1.26
 
 require (
+	github.com/coder/websocket v1.8.14
 	github.com/gin-gonic/gin v1.11.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/livekit/protocol v1.49.0

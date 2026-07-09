@@ -398,7 +398,14 @@ paths:
           schema:
             type: string
             minLength: 1
-          description: 临时房间标识。
+          description: 临时房间标识，必须与房间会话凭证中的 room_id 一致。
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: "^Bearer .+"
+          description: 房间会话凭证，格式为 `Bearer <room_session_token>`；凭证中的 member_id 必须与请求体 member_id 一致。
       requestBody:
         required: true
         content:
@@ -434,6 +441,40 @@ paths:
                     error:
                       code: invalid_member_id
                       message: 成员标识不能为空
+        "401":
+          description: 房间会话凭证无效或过期
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidRoomSession:
+                  value:
+                    error:
+                      code: invalid_room_session
+                      message: 连接凭证无效，请重新进入房间
+                roomSessionExpired:
+                  value:
+                    error:
+                      code: room_session_expired
+                      message: 连接凭证已过期，请重新进入房间
+        "403":
+          description: 房间会话凭证与路径或请求成员不匹配，或成员不在活跃状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                roomSessionMismatch:
+                  value:
+                    error:
+                      code: room_session_mismatch
+                      message: 连接凭证与房间不匹配
+                memberNotActive:
+                  value:
+                    error:
+                      code: member_not_active
+                      message: 成员不在房间中
         "404":
           description: 房间或成员不存在
           content:
@@ -539,7 +580,7 @@ components:
         member_id:
           type: string
           minLength: 1
-          description: 要离开临时房间的成员标识；服务端会裁剪前后空白。
+          description: 要离开临时房间的成员标识；服务端会裁剪前后空白，且必须与 Bearer 房间会话凭证中的 member_id 一致。
     CreateRoomResponse:
       type: object
       required:

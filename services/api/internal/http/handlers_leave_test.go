@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -13,14 +14,16 @@ import (
 	"echo/services/api/internal/domain"
 	"echo/services/api/internal/invite"
 	"echo/services/api/internal/room"
+	"echo/services/api/internal/session"
 	"echo/services/api/internal/store"
 )
 
 func TestLeaveRoomReturnsNoContent(t *testing.T) {
 	leaver := &captureContextRoomLeaver{}
-	router := NewRouter(WithRoomLeaver(leaver))
+	authorizer := &captureRoomAuthorizer{roomID: "room_test", memberID: "mem_test"}
+	router := NewRouter(WithRoomLeaver(leaver), WithRoomMemberAuthorizer(authorizer), WithCredentialConfig(testCredentialConfig()))
 
-	response := performJSONRequest(t, router, http.MethodPost, "/v1/rooms/room_test/leave", map[string]string{"member_id": "mem_test"})
+	response := performAuthorizedJSONRequest(t, router, http.MethodPost, "/v1/rooms/room_test/leave", roomSessionTokenForLeave(t, "room_test", "mem_test"), map[string]string{"member_id": "mem_test"})
 
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("POST /v1/rooms/{room_id}/leave status = %d, want %d, body: %s", response.Code, http.StatusNoContent, response.Body.String())
@@ -38,9 +41,11 @@ func TestLeaveRoomReturnsNoContent(t *testing.T) {
 
 func TestLeaveRoomPassesRequestContext(t *testing.T) {
 	leaver := &captureContextRoomLeaver{}
-	router := NewRouter(WithRoomLeaver(leaver))
+	authorizer := &captureRoomAuthorizer{roomID: "room_test", memberID: "mem_test"}
+	router := NewRouter(WithRoomLeaver(leaver), WithRoomMemberAuthorizer(authorizer), WithCredentialConfig(testCredentialConfig()))
 	request := httptest.NewRequest(http.MethodPost, "/v1/rooms/room_test/leave", strings.NewReader(`{"member_id":"mem_test"}`))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+roomSessionTokenForLeave(t, "room_test", "mem_test"))
 	ctx := context.WithValue(request.Context(), testContextKey{}, "leave-request-context")
 	request = request.WithContext(ctx)
 	response := httptest.NewRecorder()
@@ -52,6 +57,56 @@ func TestLeaveRoomPassesRequestContext(t *testing.T) {
 	}
 	if leaver.contextValue != "leave-request-context" {
 		t.Fatalf("leaver context value = %v, want leave-request-context", leaver.contextValue)
+	}
+	if authorizer.contextValue != "leave-request-context" {
+		t.Fatalf("authorizer context value = %v, want leave-request-context", authorizer.contextValue)
+	}
+}
+
+func TestLeaveRoomRejectsMissingOrMismatchedRoomSession(t *testing.T) {
+	tests := []struct {
+		name        string
+		token       string
+		pathRoomID  string
+		memberID    string
+		wantStatus  int
+		wantCode    string
+		wantMessage string
+	}{
+		{name: "missing bearer", token: "", pathRoomID: "room_test", memberID: "mem_test", wantStatus: http.StatusUnauthorized, wantCode: "invalid_room_session", wantMessage: "连接凭证无效，请重新进入房间"},
+		{name: "room mismatch", token: roomSessionTokenForLeave(t, "room_test", "mem_test"), pathRoomID: "room_other", memberID: "mem_test", wantStatus: http.StatusForbidden, wantCode: "room_session_mismatch", wantMessage: "连接凭证与房间不匹配"},
+		{name: "member mismatch", token: roomSessionTokenForLeave(t, "room_test", "mem_attacker"), pathRoomID: "room_test", memberID: "mem_victim", wantStatus: http.StatusForbidden, wantCode: "room_session_mismatch", wantMessage: "连接凭证与房间不匹配"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			leaver := &captureContextRoomLeaver{}
+			authorizer := &captureRoomAuthorizer{roomID: "room_test", memberID: "mem_attacker"}
+			router := NewRouter(WithRoomLeaver(leaver), WithRoomMemberAuthorizer(authorizer), WithCredentialConfig(testCredentialConfig()))
+
+			response := performAuthorizedJSONRequest(t, router, http.MethodPost, "/v1/rooms/"+tt.pathRoomID+"/leave", tt.token, map[string]string{"member_id": tt.memberID})
+
+			assertHTTPError(t, response, tt.wantStatus, tt.wantCode, tt.wantMessage)
+			if leaver.calls != 0 {
+				t.Fatalf("room leaver calls = %d, want 0 for rejected leave auth", leaver.calls)
+			}
+		})
+	}
+}
+
+func TestLeaveRoomRejectsInactiveAuthorizedMemberBeforeService(t *testing.T) {
+	leaver := &captureContextRoomLeaver{}
+	authorizer := &captureRoomAuthorizer{err: room.ErrMemberNotActive}
+	router := NewRouter(WithRoomLeaver(leaver), WithRoomMemberAuthorizer(authorizer), WithCredentialConfig(testCredentialConfig()))
+
+	response := performAuthorizedJSONRequest(t, router, http.MethodPost, "/v1/rooms/room_test/leave", roomSessionTokenForLeave(t, "room_test", "mem_test"), map[string]string{"member_id": "mem_test"})
+
+	assertHTTPError(t, response, http.StatusForbidden, "member_not_active", "成员不在房间中")
+	if authorizer.calls != 1 {
+		t.Fatalf("room authorizer calls = %d, want 1", authorizer.calls)
+	}
+	if leaver.calls != 0 {
+		t.Fatalf("room leaver calls = %d, want 0 for inactive authorized member", leaver.calls)
 	}
 }
 
@@ -136,8 +191,9 @@ func TestLeaveRoomValidationAndProductErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			leaver := &captureContextRoomLeaver{err: tt.err}
-			router := NewRouter(WithRoomLeaver(leaver))
-			response := performJSONRequest(t, router, http.MethodPost, "/v1/rooms/room_test/leave", tt.payload)
+			authorizer := &captureRoomAuthorizer{roomID: "room_test", memberID: "mem_test"}
+			router := NewRouter(WithRoomLeaver(leaver), WithRoomMemberAuthorizer(authorizer), WithCredentialConfig(testCredentialConfig()))
+			response := performAuthorizedJSONRequest(t, router, http.MethodPost, "/v1/rooms/room_test/leave", roomSessionTokenForLeave(t, "room_test", "mem_test"), tt.payload)
 
 			assertHTTPError(t, response, tt.wantStatus, tt.wantCode, tt.wantMessage)
 		})
@@ -148,7 +204,7 @@ func TestLeaveRoomIntegrationAllowsJoinBeforeExpiryAndClearsRetention(t *testing
 	router, repository := newLeaveRoomIntegration(t)
 	created := createRoomForLeaveIntegration(t, router)
 
-	leaveResponse := performJSONRequest(t, router, http.MethodPost, "/v1/rooms/"+created.Room.ID+"/leave", map[string]string{"member_id": created.Member.ID})
+	leaveResponse := performAuthorizedJSONRequest(t, router, http.MethodPost, "/v1/rooms/"+created.Room.ID+"/leave", created.RoomSessionToken, map[string]string{"member_id": created.Member.ID})
 	if leaveResponse.Code != http.StatusNoContent {
 		t.Fatalf("POST leave status = %d, want %d, body: %s", leaveResponse.Code, http.StatusNoContent, leaveResponse.Body.String())
 	}
@@ -178,7 +234,7 @@ func TestLeaveRoomIntegrationAllowsJoinBeforeExpiryAndClearsRetention(t *testing
 func TestLeaveRoomIntegrationJoinAfterExpiryReturnsExpired(t *testing.T) {
 	router, repository := newLeaveRoomIntegration(t)
 	created := createRoomForLeaveIntegration(t, router)
-	leaveResponse := performJSONRequest(t, router, http.MethodPost, "/v1/rooms/"+created.Room.ID+"/leave", map[string]string{"member_id": created.Member.ID})
+	leaveResponse := performAuthorizedJSONRequest(t, router, http.MethodPost, "/v1/rooms/"+created.Room.ID+"/leave", created.RoomSessionToken, map[string]string{"member_id": created.Member.ID})
 	if leaveResponse.Code != http.StatusNoContent {
 		t.Fatalf("POST leave status = %d, want %d, body: %s", leaveResponse.Code, http.StatusNoContent, leaveResponse.Body.String())
 	}
@@ -216,7 +272,7 @@ func newLeaveRoomIntegration(t *testing.T) (http.Handler, *store.Repository) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	repository := store.NewRepository(db)
 	roomService := room.NewService(repository, invite.NewGenerator())
-	return NewRouter(WithRoomCreator(roomService), WithRoomJoiner(roomService), WithRoomLeaver(roomService), WithCredentialConfig(testCredentialConfig())), repository
+	return NewRouter(WithRoomCreator(roomService), WithRoomJoiner(roomService), WithRoomLeaver(roomService), WithRoomMemberAuthorizer(roomService), WithCredentialConfig(testCredentialConfig())), repository
 }
 
 func createRoomForLeaveIntegration(t *testing.T, router http.Handler) createRoomResponseBody {
@@ -231,6 +287,63 @@ func createRoomForLeaveIntegration(t *testing.T, router http.Handler) createRoom
 		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", createResponse.Code, http.StatusCreated, createResponse.Body.Len())
 	}
 	return decodeCreateRoomResponse(t, createResponse)
+}
+
+func performAuthorizedJSONRequest(t *testing.T, handler http.Handler, method string, target string, bearerToken string, payload any) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal payload: %v", err)
+	}
+	request := httptest.NewRequest(method, target, strings.NewReader(string(body)))
+	request.Header.Set("Content-Type", "application/json")
+	if bearerToken != "" {
+		request.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func roomSessionTokenForLeave(t *testing.T, roomID string, memberID string) string {
+	t.Helper()
+	cfg := testCredentialConfig()
+	token, _, err := session.Sign(session.SignInput{Secret: cfg.RoomSessionSecret, RoomID: roomID, MemberID: memberID, Now: credentialNow, TTL: cfg.RoomSessionTokenTTL})
+	if err != nil {
+		t.Fatalf("session.Sign returned error: %v", err)
+	}
+	return token
+}
+
+type captureRoomAuthorizer struct {
+	roomID       string
+	memberID     string
+	err          error
+	calls        int
+	contextValue any
+	input        room.AuthorizeMemberInput
+}
+
+func (c *captureRoomAuthorizer) AuthorizeMemberContext(ctx context.Context, input room.AuthorizeMemberInput) (room.AuthorizeMemberResult, error) {
+	c.calls++
+	c.contextValue = ctx.Value(testContextKey{})
+	c.input = input
+	if c.err != nil {
+		return room.AuthorizeMemberResult{}, c.err
+	}
+	roomID := c.roomID
+	if roomID == "" {
+		roomID = input.RoomID
+	}
+	memberID := c.memberID
+	if memberID == "" {
+		memberID = input.MemberID
+	}
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	return room.AuthorizeMemberResult{
+		Room:   domain.Room{ID: roomID, State: domain.RoomStateActive, LiveKitRoomName: "lk_" + roomID, CreatedAt: now},
+		Member: domain.Member{ID: memberID, RoomID: roomID, State: domain.MemberStateOnline, VoiceMode: domain.VoiceModePushToTalk, LiveKitIdentity: memberID, JoinedAt: now},
+	}, nil
 }
 
 type captureContextRoomLeaver struct {
