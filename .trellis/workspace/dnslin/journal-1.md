@@ -556,3 +556,38 @@ Implemented Issue 16 backend WebSocket mute, speaking, and reconnect state broad
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: Harden WebSocket room state transitions
+
+**Date**: 2026-07-10
+**Task**: Harden WebSocket room state transitions
+**Branch**: `issue-16-websocket-state-broadcast`
+
+### Summary
+
+Fixed durable member transitions, room-scoped WebSocket serialization, reconnect arbitration, logical outbound groups, and their deterministic regression coverage.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fcc2df1` | (see git log) |
+| `caca1de` | (see git log) |
+| `d29590b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
