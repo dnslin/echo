@@ -38,6 +38,7 @@ func newRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 	roomHub := apiws.NewHub(apiws.Config{
 		Authorizer:        roomService,
 		SnapshotStore:     repository,
+		StateMutator:      roomService,
 		RoomSessionSecret: cfg.RoomSessionSecret,
 		OriginPatterns:    cfg.WebSocketOriginPatterns,
 	})

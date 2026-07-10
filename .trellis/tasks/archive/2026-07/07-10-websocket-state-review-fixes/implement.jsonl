@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend development checklist and required verification commands for the API service."}
+{"file":".trellis/spec/backend/websocket-room-state-guidelines.md","reason":"Authoritative WebSocket handshake, snapshot, reconnect, sequencing, queue, and cleanup contract."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"SQLite/GORM transaction and member lifecycle constraints for durable transition changes."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Existing room/service error mapping must remain compatible."}
+{"file":".trellis/tasks/07-10-websocket-state-review-fixes/research/review-findings.md","reason":"Verified review root causes, invariants, and deterministic regression seams."}

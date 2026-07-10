@@ -23,10 +23,11 @@ func TestLeaveRoomMemberMarksMemberDisconnectedAndExcludesFromActiveCount(t *tes
 		t.Fatalf("CreateRoomWithMember returned error: %v", err)
 	}
 
-	_, leftMember, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
+	transition, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
 	if err != nil {
 		t.Fatalf("LeaveRoomMember returned error: %v", err)
 	}
+	leftMember := transition.Member
 
 	if leftMember.State != domain.MemberStateDisconnected || leftMember.Speaking {
 		t.Fatalf("returned member state/speaking = %q/%v, want disconnected/false", leftMember.State, leftMember.Speaking)
@@ -63,10 +64,12 @@ func TestLeaveRoomMemberWithOtherActiveMembersDoesNotStartRetention(t *testing.T
 		t.Fatalf("CreateMember returned error: %v", err)
 	}
 
-	leftRoom, leftMember, err := repository.LeaveRoomMember(context.Background(), room.ID, guest.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
+	transition, err := repository.LeaveRoomMember(context.Background(), room.ID, guest.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
 	if err != nil {
 		t.Fatalf("LeaveRoomMember returned error: %v", err)
 	}
+	leftRoom := transition.Room
+	leftMember := transition.Member
 
 	if leftMember.State != domain.MemberStateDisconnected || leftMember.Speaking {
 		t.Fatalf("left member state/speaking = %q/%v, want disconnected/false", leftMember.State, leftMember.Speaking)
@@ -101,12 +104,12 @@ func TestLeaveRoomMemberLastActiveMemberStartsRetention(t *testing.T) {
 		t.Fatalf("CreateRoomWithMember returned error: %v", err)
 	}
 
-	leftRoom, _, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
+	transition, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
 	if err != nil {
 		t.Fatalf("LeaveRoomMember returned error: %v", err)
 	}
 
-	assertRoomRetentionStarted(t, leftRoom, leftAt)
+	assertRoomRetentionStarted(t, transition.Room, leftAt)
 	found, err := repository.FindRoomByInviteCode(context.Background(), room.InviteCode)
 	if err != nil {
 		t.Fatalf("FindRoomByInviteCode returned error: %v", err)
@@ -125,14 +128,16 @@ func TestLeaveRoomMemberRepeatedLeaveDoesNotExtendRetention(t *testing.T) {
 	if err := repository.CreateRoomWithMember(context.Background(), room, member); err != nil {
 		t.Fatalf("CreateRoomWithMember returned error: %v", err)
 	}
-	if _, _, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), firstLeaveAt, testEmptyRoomRetention); err != nil {
+	if _, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), firstLeaveAt, testEmptyRoomRetention); err != nil {
 		t.Fatalf("first LeaveRoomMember returned error: %v", err)
 	}
 
-	leftRoom, leftMember, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), secondLeaveAt, testEmptyRoomRetention)
+	transition, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), secondLeaveAt, testEmptyRoomRetention)
 	if err != nil {
 		t.Fatalf("second LeaveRoomMember returned error: %v", err)
 	}
+	leftRoom := transition.Room
+	leftMember := transition.Member
 
 	if leftMember.State != domain.MemberStateDisconnected || leftMember.Speaking {
 		t.Fatalf("left member state/speaking = %q/%v, want disconnected/false", leftMember.State, leftMember.Speaking)
@@ -143,6 +148,34 @@ func TestLeaveRoomMemberRepeatedLeaveDoesNotExtendRetention(t *testing.T) {
 		t.Fatalf("FindRoomByInviteCode returned error: %v", err)
 	}
 	assertRoomRetentionStarted(t, found, firstLeaveAt)
+}
+
+func TestLeaveRoomMemberReportsOnlyCommittedActiveTransition(t *testing.T) {
+	db := openTestSQLite(t)
+	repository := NewRepository(db)
+	createdAt := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	firstLeaveAt := createdAt.Add(5 * time.Minute)
+	room := testRoom("room_leave_transitioned", "LEAVTR", createdAt)
+	member := testMember("mem_leave_transitioned", room.ID, createdAt)
+	if err := repository.CreateRoomWithMember(context.Background(), room, member); err != nil {
+		t.Fatalf("CreateRoomWithMember returned error: %v", err)
+	}
+
+	first, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), firstLeaveAt, testEmptyRoomRetention)
+	if err != nil {
+		t.Fatalf("first LeaveRoomMember returned error: %v", err)
+	}
+	if !first.Transitioned {
+		t.Fatalf("first leave Transitioned = false, want true")
+	}
+
+	second, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), firstLeaveAt.Add(time.Minute), testEmptyRoomRetention)
+	if err != nil {
+		t.Fatalf("second LeaveRoomMember returned error: %v", err)
+	}
+	if second.Transitioned {
+		t.Fatalf("second leave Transitioned = true, want false")
+	}
 }
 
 func TestLeaveRoomMemberLastActiveMemberRefreshesStaleOrPartialRetentionMetadata(t *testing.T) {
@@ -194,12 +227,12 @@ func TestLeaveRoomMemberLastActiveMemberRefreshesStaleOrPartialRetentionMetadata
 				t.Fatalf("CreateRoomWithMember returned error: %v", err)
 			}
 
-			leftRoom, _, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
+			transition, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
 			if err != nil {
 				t.Fatalf("LeaveRoomMember returned error: %v", err)
 			}
 
-			assertRoomRetentionStarted(t, leftRoom, leftAt)
+			assertRoomRetentionStarted(t, transition.Room, leftAt)
 			found, err := repository.FindRoomByInviteCode(context.Background(), room.InviteCode)
 			if err != nil {
 				t.Fatalf("FindRoomByInviteCode returned error: %v", err)
@@ -226,7 +259,7 @@ func TestLeaveRoomMemberRepeatedLeaveAfterRetentionExpiresReturnsRoomExpired(t *
 		t.Fatalf("CreateRoomWithMember returned error: %v", err)
 	}
 
-	_, _, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
+	_, err := repository.LeaveRoomMember(context.Background(), room.ID, member.ID, activeMemberStates(), leftAt, testEmptyRoomRetention)
 	if !errors.Is(err, domain.ErrRoomExpired) {
 		t.Fatalf("LeaveRoomMember error = %v, want ErrRoomExpired", err)
 	}
@@ -255,18 +288,18 @@ func TestLeaveRoomMemberReturnsStableMissingAndExpiredErrors(t *testing.T) {
 		t.Fatalf("CreateRoomWithMember returned error: %v", err)
 	}
 
-	_, _, err := repository.LeaveRoomMember(context.Background(), "room_missing", "mem_leave_errors", activeMemberStates(), leftAt, testEmptyRoomRetention)
+	_, err := repository.LeaveRoomMember(context.Background(), "room_missing", "mem_leave_errors", activeMemberStates(), leftAt, testEmptyRoomRetention)
 	if !errors.Is(err, domain.ErrRoomNotFound) {
 		t.Fatalf("missing room error = %v, want ErrRoomNotFound", err)
 	}
-	_, _, err = repository.LeaveRoomMember(context.Background(), room.ID, "mem_missing", activeMemberStates(), leftAt, testEmptyRoomRetention)
+	_, err = repository.LeaveRoomMember(context.Background(), room.ID, "mem_missing", activeMemberStates(), leftAt, testEmptyRoomRetention)
 	if !errors.Is(err, domain.ErrMemberNotFound) {
 		t.Fatalf("missing member error = %v, want ErrMemberNotFound", err)
 	}
 	if err := repository.MarkRoomExpired(context.Background(), room.ID, leftAt); err != nil {
 		t.Fatalf("MarkRoomExpired returned error: %v", err)
 	}
-	_, _, err = repository.LeaveRoomMember(context.Background(), room.ID, "mem_leave_errors", activeMemberStates(), leftAt, testEmptyRoomRetention)
+	_, err = repository.LeaveRoomMember(context.Background(), room.ID, "mem_leave_errors", activeMemberStates(), leftAt, testEmptyRoomRetention)
 	if !errors.Is(err, domain.ErrRoomExpired) {
 		t.Fatalf("expired room error = %v, want ErrRoomExpired", err)
 	}

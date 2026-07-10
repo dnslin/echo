@@ -172,6 +172,121 @@ func (r *Repository) CreateMember(ctx context.Context, member domain.Member) err
 	return r.db.WithContext(ctx).Create(memberToModel(member)).Error
 }
 
+func (r *Repository) UpdateMemberMute(ctx context.Context, roomID string, memberID string, muted bool) (domain.MemberMuteTransition, error) {
+	if r == nil || r.db == nil {
+		return domain.MemberMuteTransition{}, errors.New("store repository requires a database")
+	}
+	var transition domain.MemberMuteTransition
+	err := r.db.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		if err := conn.Exec("BEGIN IMMEDIATE").Error; err != nil {
+			return err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = conn.Exec("ROLLBACK").Error
+			}
+		}()
+
+		tx := conn.Session(&gorm.Session{SkipDefaultTransaction: true})
+		roomModel, err := findRoomByID(tx, roomID)
+		if err != nil {
+			return err
+		}
+		if domain.RoomState(roomModel.State) == domain.RoomStateExpired {
+			return domain.ErrRoomExpired
+		}
+		memberModel, err := findMemberByRoomAndID(tx, roomID, memberID)
+		if err != nil {
+			return err
+		}
+		if domain.MemberState(memberModel.State) != domain.MemberStateOnline {
+			return domain.ErrMemberNotActive
+		}
+
+		transition.MutedChanged = memberModel.Muted != muted
+		transition.SpeakingChanged = muted && memberModel.Speaking
+		if transition.MutedChanged || transition.SpeakingChanged {
+			updates := map[string]any{"muted": muted}
+			memberModel.Muted = muted
+			if muted {
+				updates["speaking"] = false
+				memberModel.Speaking = false
+			}
+			if err := tx.Model(&MemberModel{}).Where("room_id = ? AND id = ? AND state = ?", roomID, memberID, string(domain.MemberStateOnline)).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		if err := conn.Exec("COMMIT").Error; err != nil {
+			return err
+		}
+		committed = true
+		transition.Member = modelToMember(memberModel)
+		return nil
+	})
+	if err != nil {
+		return domain.MemberMuteTransition{}, err
+	}
+	return transition, nil
+}
+
+func (r *Repository) UpdateMemberSpeaking(ctx context.Context, roomID string, memberID string, speaking bool) (domain.MemberSpeakingTransition, error) {
+	if r == nil || r.db == nil {
+		return domain.MemberSpeakingTransition{}, errors.New("store repository requires a database")
+	}
+	var transition domain.MemberSpeakingTransition
+	err := r.db.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		if err := conn.Exec("BEGIN IMMEDIATE").Error; err != nil {
+			return err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = conn.Exec("ROLLBACK").Error
+			}
+		}()
+
+		tx := conn.Session(&gorm.Session{SkipDefaultTransaction: true})
+		roomModel, err := findRoomByID(tx, roomID)
+		if err != nil {
+			return err
+		}
+		if domain.RoomState(roomModel.State) == domain.RoomStateExpired {
+			return domain.ErrRoomExpired
+		}
+		memberModel, err := findMemberByRoomAndID(tx, roomID, memberID)
+		if err != nil {
+			return err
+		}
+		if domain.MemberState(memberModel.State) != domain.MemberStateOnline {
+			return domain.ErrMemberNotActive
+		}
+
+		effectiveSpeaking := speaking && !memberModel.Muted
+		transition.Changed = memberModel.Speaking != effectiveSpeaking
+		if transition.Changed {
+			if err := tx.Model(&MemberModel{}).Where("room_id = ? AND id = ? AND state = ?", roomID, memberID, string(domain.MemberStateOnline)).Update("speaking", effectiveSpeaking).Error; err != nil {
+				return err
+			}
+			memberModel.Speaking = effectiveSpeaking
+		}
+		if err := conn.Exec("COMMIT").Error; err != nil {
+			return err
+		}
+		committed = true
+		transition.Member = modelToMember(memberModel)
+		return nil
+	})
+	if err != nil {
+		return domain.MemberSpeakingTransition{}, err
+	}
+	return transition, nil
+}
+
+func (r *Repository) DisconnectMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, disconnectedAt time.Time, retention time.Duration) (domain.MemberDisconnectTransition, error) {
+	return r.LeaveRoomMember(ctx, roomID, memberID, activeStates, disconnectedAt, retention)
+}
+
 func (r *Repository) JoinRoomWithMember(ctx context.Context, room domain.Room, member domain.Member, activeStates []domain.MemberState, maxActiveMembers int, joinedAt time.Time) (domain.Room, error) {
 	if r == nil || r.db == nil {
 		return domain.Room{}, errors.New("store repository requires a database")
@@ -249,16 +364,15 @@ func (r *Repository) JoinRoomWithMember(ctx context.Context, room domain.Room, m
 	return joinedRoom, nil
 }
 
-func (r *Repository) LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.Room, domain.Member, error) {
+func (r *Repository) LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.MemberDisconnectTransition, error) {
 	if r == nil || r.db == nil {
-		return domain.Room{}, domain.Member{}, errors.New("store repository requires a database")
+		return domain.MemberDisconnectTransition{}, errors.New("store repository requires a database")
 	}
 	if len(activeStates) == 0 {
-		return domain.Room{}, domain.Member{}, errors.New("leave requires active member states")
+		return domain.MemberDisconnectTransition{}, errors.New("leave requires active member states")
 	}
 
-	var leftRoom domain.Room
-	var leftMember domain.Member
+	var transition domain.MemberDisconnectTransition
 	err := r.db.WithContext(ctx).Connection(func(conn *gorm.DB) error {
 		if err := conn.Exec("BEGIN IMMEDIATE").Error; err != nil {
 			return err
@@ -341,14 +455,17 @@ func (r *Repository) LeaveRoomMember(ctx context.Context, roomID string, memberI
 			return err
 		}
 		committed = true
-		leftRoom = modelToRoom(roomModel)
-		leftMember = modelToMember(memberModel)
+		transition = domain.MemberDisconnectTransition{
+			Room:         modelToRoom(roomModel),
+			Member:       modelToMember(memberModel),
+			Transitioned: wasActive,
+		}
 		return nil
 	})
 	if err != nil {
-		return domain.Room{}, domain.Member{}, err
+		return domain.MemberDisconnectTransition{}, err
 	}
-	return leftRoom, leftMember, nil
+	return transition, nil
 }
 
 func (r *Repository) MarkRoomExpired(ctx context.Context, roomID string, updatedAt time.Time) error {

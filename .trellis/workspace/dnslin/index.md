@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-07-09
+- **Total Sessions**: 17
+- **Last Active**: 2026-07-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~524 | Active |
+| `journal-1.md` | ~593 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-07-10 | Harden WebSocket room state transitions | `fcc2df1`, `caca1de`, `d29590b` | `issue-16-websocket-state-broadcast` |
+| 16 | 2026-07-10 | Issue 16 websocket state broadcast | `081578b`, `1b4edc1` | `issue-16-websocket-state-broadcast` |
 | 15 | 2026-07-09 | Issue 14 WebSocket 房间状态契约 | `ca89cbf` | `issue-14-websocket-room-state-contract` |
 | 14 | 2026-07-09 | Fix PR 35 credential review findings | `8d5667a`, `7f69630` | `issue-13-room-livekit-tokens` |
 | 13 | 2026-07-09 | Issue #13 room session and LiveKit credentials | `6be67dc` | `issue-13-room-livekit-tokens` |

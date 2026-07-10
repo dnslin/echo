@@ -225,7 +225,7 @@ func (h *Handlers) LeaveRoom(c *gin.Context) {
 		writeRoomError(c, err)
 		return
 	}
-	if h.roomEventNotifier != nil {
+	if result.Transitioned && h.roomEventNotifier != nil {
 		h.roomEventNotifier.NotifyMemberLeft(c.Request.Context(), result.Room, result.Member)
 	}
 

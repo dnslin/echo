@@ -107,6 +107,7 @@ func TestConnectionReceivesRoomEventAfterSnapshotBuildStarts(t *testing.T) {
 	hub := NewHub(Config{
 		Authorizer:        fixedAuthorizer{result: room.AuthorizeMemberResult{Room: roomValue, Member: selfMember}},
 		SnapshotStore:     snapshotStore,
+		StateMutator:      fixedStateMutator{},
 		RoomSessionSecret: wsTestSessionSecret,
 		Now:               func() time.Time { return wsTestNow },
 		WriteTimeout:      time.Second,
@@ -125,6 +126,7 @@ func TestConnectionReceivesRoomEventAfterSnapshotBuildStarts(t *testing.T) {
 		hub.NotifyMemberJoined(context.Background(), roomValue, joinedMember)
 		close(joinedNotified)
 	}()
+	waitForHubRoomRefs(t, hub, roomValue.ID, 2)
 	snapshotStore.releaseSnapshot()
 
 	assertEventType(t, readEvent(t, conn), "room.snapshot")
@@ -136,6 +138,60 @@ func TestConnectionReceivesRoomEventAfterSnapshotBuildStarts(t *testing.T) {
 		t.Fatalf("member.joined member_id = %q, want %q", payload.Member.MemberID, joinedMember.ID)
 	}
 	<-joinedNotified
+}
+
+func TestBlockedSnapshotForOneRoomDoesNotBlockAnotherRoom(t *testing.T) {
+	roomA := wsTestRoom("room_blocked_snapshot_a", "BLOCKA", domain.RoomStateActive, wsTestNow)
+	memberA := wsTestMember("mem_blocked_snapshot_a", roomA.ID, domain.MemberStateOnline, true, wsTestNow)
+	roomB := wsTestRoom("room_progress_b", "PROGRB", domain.RoomStateActive, wsTestNow)
+	memberB := wsTestMember("mem_progress_b", roomB.ID, domain.MemberStateOnline, true, wsTestNow)
+	joinedB := wsTestMember("mem_joined_b", roomB.ID, domain.MemberStateOnline, false, wsTestNow.Add(time.Minute))
+	snapshotStore := newBlockingSnapshotStore(roomA, []domain.Member{memberA})
+	hub := NewHub(Config{
+		Authorizer:        fixedAuthorizer{result: room.AuthorizeMemberResult{Room: roomA, Member: memberA}},
+		SnapshotStore:     snapshotStore,
+		StateMutator:      fixedStateMutator{},
+		RoomSessionSecret: wsTestSessionSecret,
+		Now:               func() time.Time { return wsTestNow },
+		WriteTimeout:      time.Second,
+	})
+	clientA := hub.newConnection(nil, roomA.ID, memberA.ID)
+	observerB := hub.newConnection(nil, roomB.ID, memberB.ID)
+	hub.mu.Lock()
+	roomStateB := hub.roomStateLocked(roomB.ID)
+	roomStateB.connections[observerB] = struct{}{}
+	roomStateB.byMember[memberB.ID] = observerB
+	hub.mu.Unlock()
+
+	registrationDone := make(chan error, 1)
+	go func() {
+		registrationDone <- hub.registerWithInitialSnapshot(clientA)
+	}()
+	<-snapshotStore.entered
+
+	joinedDone := make(chan struct{})
+	go func() {
+		hub.NotifyMemberJoined(context.Background(), roomB, joinedB)
+		close(joinedDone)
+	}()
+	progressed := false
+	select {
+	case <-joinedDone:
+		progressed = true
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	snapshotStore.releaseSnapshot()
+	if err := <-registrationDone; err != nil {
+		t.Fatalf("registerWithInitialSnapshot returned error: %v", err)
+	}
+	<-joinedDone
+	if !progressed {
+		t.Fatalf("room B join notification waited for room A snapshot I/O")
+	}
+	if outbound := <-observerB.send; outbound.events[0].Type != "member.joined" {
+		t.Fatalf("room B event type = %q, want member.joined", outbound.events[0].Type)
+	}
 }
 
 func TestHandshakeRejectsInvalidRoomSessionCredentials(t *testing.T) {
@@ -302,7 +358,7 @@ func TestPrivateSnapshotAndErrorDoNotAdvanceSharedBroadcastSequenceForOtherClien
 
 	writeClientCommand(t, bobConn, map[string]any{"type": "room.resync_requested", "request_id": "resync-private", "payload": map[string]any{"reason": "test"}})
 	assertEventType(t, readEvent(t, bobConn), "room.snapshot")
-	writeClientCommand(t, bobConn, map[string]any{"type": "member.speaking_changed", "request_id": "error-private", "payload": map[string]any{"speaking": true}})
+	writeClientCommand(t, bobConn, map[string]any{"type": "member.voice_mode_changed", "request_id": "error-private", "payload": map[string]any{"voice_mode": "free_talk"}})
 	assertEventType(t, readEvent(t, bobConn), "room.error")
 
 	carol := joinRoomThroughHTTP(t, integration.router, created.Room.InviteCode, "Carol", "avatar_09")
@@ -384,7 +440,9 @@ func TestHTTPLeaveRequiresMatchingRoomSessionBeforeBroadcastOrClose(t *testing.T
 }
 
 func TestHubPrunesEmptyRoomStateAndNotificationsWithoutClientsDoNotCreateRooms(t *testing.T) {
-	integration := newWSIntegration(t)
+	integration := newWSIntegration(t, func(config *Config) {
+		config.ReconnectWindow = 50 * time.Millisecond
+	})
 	integration.hub.NotifyMemberJoined(context.Background(), domain.Room{ID: "room_without_clients"}, domain.Member{ID: "mem_without_clients"})
 	if hubHasRoomState(integration.hub, "room_without_clients") {
 		t.Fatalf("hub retained room state for HTTP-only notification without connected clients")
@@ -397,6 +455,7 @@ func TestHubPrunesEmptyRoomStateAndNotificationsWithoutClientsDoNotCreateRooms(t
 		t.Fatalf("hub did not retain room state for connected room")
 	}
 	conn.Close(websocket.StatusNormalClosure, "test done")
+	waitForHubRoomState(t, integration.hub, created.Room.ID, true)
 	waitForHubRoomState(t, integration.hub, created.Room.ID, false)
 }
 
@@ -498,7 +557,7 @@ func TestUnknownAndInvalidMessagesReturnRoomErrorWithoutMutation(t *testing.T) {
 	defer conn.Close(websocket.StatusNormalClosure, "test done")
 	assertEventType(t, readEvent(t, conn), "room.snapshot")
 
-	writeClientCommand(t, conn, map[string]any{"type": "member.speaking_changed", "request_id": "req-unknown", "payload": map[string]any{"speaking": true}})
+	writeClientCommand(t, conn, map[string]any{"type": "member.voice_mode_changed", "request_id": "req-unknown", "payload": map[string]any{"voice_mode": "free_talk"}})
 	unknown := readEvent(t, conn)
 	assertEventType(t, unknown, "room.error")
 	var unknownPayload roomErrorPayload
@@ -526,10 +585,11 @@ func TestUnknownAndInvalidMessagesReturnRoomErrorWithoutMutation(t *testing.T) {
 }
 
 type wsIntegration struct {
-	router     http.Handler
-	server     *httptest.Server
-	repository *store.Repository
-	hub        *Hub
+	router      http.Handler
+	server      *httptest.Server
+	repository  *store.Repository
+	roomService *room.Service
+	hub         *Hub
 }
 
 func newWSIntegration(t *testing.T, options ...func(*Config)) *wsIntegration {
@@ -545,11 +605,13 @@ func newWSIntegration(t *testing.T, options ...func(*Config)) *wsIntegration {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	repository := store.NewRepository(db)
 	roomService := room.NewService(repository, invite.NewGenerator())
+	clockStartedAt := time.Now()
 	config := Config{
 		Authorizer:          roomService,
 		SnapshotStore:       repository,
+		StateMutator:        roomService,
 		RoomSessionSecret:   wsTestSessionSecret,
-		Now:                 func() time.Time { return wsTestNow },
+		Now:                 func() time.Time { return wsTestNow.Add(time.Since(clockStartedAt)) },
 		ReconnectWindow:     30 * time.Second,
 		WriteTimeout:        time.Second,
 		ConnectionQueueSize: 8,
@@ -577,7 +639,7 @@ func newWSIntegration(t *testing.T, options ...func(*Config)) *wsIntegration {
 	)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
-	return &wsIntegration{router: router, server: server, repository: repository, hub: hub}
+	return &wsIntegration{router: router, server: server, repository: repository, roomService: roomService, hub: hub}
 }
 
 func createRoomThroughHTTP(t *testing.T, router http.Handler, nickname string, avatarID string) roomCredentialResponse {
@@ -795,6 +857,24 @@ func waitForHubRoomState(t *testing.T, h *Hub, roomID string, want bool) {
 	t.Fatalf("hub room state for %q = %v, want %v", roomID, hubHasRoomState(h, roomID), want)
 }
 
+func waitForHubRoomRefs(t *testing.T, h *Hub, roomID string, minimum int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		refs := 0
+		if roomState := h.rooms[roomID]; roomState != nil {
+			refs = roomState.refs
+		}
+		h.mu.Unlock()
+		if refs >= minimum {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("hub room %q refs did not reach %d", roomID, minimum)
+}
+
 func assertPreUpgradeError(t *testing.T, response *http.Response, wantStatus int, wantCode string, wantMessage string) {
 	t.Helper()
 	if response == nil {
@@ -838,6 +918,20 @@ func (f fixedAuthorizer) AuthorizeMemberContext(context.Context, room.AuthorizeM
 		return room.AuthorizeMemberResult{}, f.err
 	}
 	return f.result, nil
+}
+
+type fixedStateMutator struct{}
+
+func (fixedStateMutator) UpdateMemberMuteContext(context.Context, room.UpdateMemberMuteInput) (room.UpdateMemberMuteResult, error) {
+	return room.UpdateMemberMuteResult{}, nil
+}
+
+func (fixedStateMutator) UpdateMemberSpeakingContext(context.Context, room.UpdateMemberSpeakingInput) (room.UpdateMemberSpeakingResult, error) {
+	return room.UpdateMemberSpeakingResult{}, nil
+}
+
+func (fixedStateMutator) DisconnectMemberContext(context.Context, room.DisconnectMemberInput) (room.LeaveResult, error) {
+	return room.LeaveResult{}, nil
 }
 
 type blockingSnapshotStore struct {

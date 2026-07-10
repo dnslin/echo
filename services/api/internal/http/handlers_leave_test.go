@@ -39,6 +39,27 @@ func TestLeaveRoomReturnsNoContent(t *testing.T) {
 	}
 }
 
+func TestLeaveRoomDoesNotNotifyWhenDisconnectWasAlreadyCommitted(t *testing.T) {
+	leaver := &captureContextRoomLeaver{transitioned: false}
+	authorizer := &captureRoomAuthorizer{roomID: "room_test", memberID: "mem_test"}
+	notifier := &captureRoomEventNotifier{}
+	router := NewRouter(
+		WithRoomLeaver(leaver),
+		WithRoomMemberAuthorizer(authorizer),
+		WithRoomEventNotifier(notifier),
+		WithCredentialConfig(testCredentialConfig()),
+	)
+
+	response := performAuthorizedJSONRequest(t, router, http.MethodPost, "/v1/rooms/room_test/leave", roomSessionTokenForLeave(t, "room_test", "mem_test"), map[string]string{"member_id": "mem_test"})
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("POST leave status = %d, want 204, body: %s", response.Code, response.Body.String())
+	}
+	if notifier.leftCalls != 0 {
+		t.Fatalf("NotifyMemberLeft calls = %d, want 0 for Transitioned=false", notifier.leftCalls)
+	}
+}
+
 func TestLeaveRoomPassesRequestContext(t *testing.T) {
 	leaver := &captureContextRoomLeaver{}
 	authorizer := &captureRoomAuthorizer{roomID: "room_test", memberID: "mem_test"}
@@ -350,7 +371,18 @@ type captureContextRoomLeaver struct {
 	calls        int
 	contextValue any
 	input        room.LeaveInput
+	transitioned bool
 	err          error
+}
+
+type captureRoomEventNotifier struct {
+	leftCalls int
+}
+
+func (*captureRoomEventNotifier) NotifyMemberJoined(context.Context, domain.Room, domain.Member) {}
+
+func (c *captureRoomEventNotifier) NotifyMemberLeft(context.Context, domain.Room, domain.Member) {
+	c.leftCalls++
 }
 
 func (c *captureContextRoomLeaver) LeaveContext(ctx context.Context, input room.LeaveInput) (room.LeaveResult, error) {
@@ -362,6 +394,7 @@ func (c *captureContextRoomLeaver) LeaveContext(ctx context.Context, input room.
 	}
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	return room.LeaveResult{
+		Transitioned: c.transitioned,
 		Room: domain.Room{
 			ID:         input.RoomID,
 			Name:       "临时房间",

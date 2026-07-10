@@ -46,7 +46,7 @@ type joinRepository interface {
 }
 
 type leaveRepository interface {
-	LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.Room, domain.Member, error)
+	LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.MemberDisconnectTransition, error)
 }
 
 type expiryRepository interface {
@@ -56,6 +56,11 @@ type expiryRepository interface {
 type authorizeRepository interface {
 	FindRoomByID(ctx context.Context, roomID string) (domain.Room, error)
 	FindMemberByRoomAndID(ctx context.Context, roomID string, memberID string) (domain.Member, error)
+}
+
+type memberStateRepository interface {
+	UpdateMemberMute(ctx context.Context, roomID string, memberID string, muted bool) (domain.MemberMuteTransition, error)
+	UpdateMemberSpeaking(ctx context.Context, roomID string, memberID string, speaking bool) (domain.MemberSpeakingTransition, error)
 }
 
 type InviteGenerator interface {
@@ -101,8 +106,37 @@ type LeaveInput struct {
 }
 
 type LeaveResult struct {
-	Room   domain.Room
-	Member domain.Member
+	Room         domain.Room
+	Member       domain.Member
+	Transitioned bool
+}
+
+type UpdateMemberMuteInput struct {
+	RoomID   string
+	MemberID string
+	Muted    bool
+}
+
+type UpdateMemberMuteResult struct {
+	Member          domain.Member
+	MutedChanged    bool
+	SpeakingChanged bool
+}
+
+type UpdateMemberSpeakingInput struct {
+	RoomID   string
+	MemberID string
+	Speaking bool
+}
+
+type UpdateMemberSpeakingResult struct {
+	Member  domain.Member
+	Changed bool
+}
+
+type DisconnectMemberInput struct {
+	RoomID   string
+	MemberID string
 }
 
 type AuthorizeMemberInput struct {
@@ -246,7 +280,7 @@ func (s *Service) LeaveContext(ctx context.Context, input LeaveInput) (LeaveResu
 	}
 
 	leftAt := s.now().UTC()
-	leftRoom, leftMember, err := repository.LeaveRoomMember(ctx, normalized.roomID, normalized.memberID, activeMemberStates(), leftAt, emptyRoomRetention)
+	transition, err := repository.LeaveRoomMember(ctx, normalized.roomID, normalized.memberID, activeMemberStates(), leftAt, emptyRoomRetention)
 	if err != nil {
 		if errors.Is(err, domain.ErrRoomNotFound) {
 			return LeaveResult{}, ErrRoomNotFound
@@ -259,7 +293,81 @@ func (s *Service) LeaveContext(ctx context.Context, input LeaveInput) (LeaveResu
 		}
 		return LeaveResult{}, err
 	}
-	return LeaveResult{Room: leftRoom, Member: leftMember}, nil
+	return LeaveResult{Room: transition.Room, Member: transition.Member, Transitioned: transition.Transitioned}, nil
+}
+
+func (s *Service) UpdateMemberMuteContext(ctx context.Context, input UpdateMemberMuteInput) (UpdateMemberMuteResult, error) {
+	normalized, err := validateLeaveInput(LeaveInput{RoomID: input.RoomID, MemberID: input.MemberID})
+	if err != nil {
+		return UpdateMemberMuteResult{}, err
+	}
+	if s == nil || s.repository == nil {
+		return UpdateMemberMuteResult{}, errors.New("room service is not configured")
+	}
+	repository, ok := s.repository.(memberStateRepository)
+	if !ok {
+		return UpdateMemberMuteResult{}, errors.New("room repository does not support member mute updates")
+	}
+
+	transition, err := repository.UpdateMemberMute(ctx, normalized.roomID, normalized.memberID, input.Muted)
+	if err != nil {
+		return UpdateMemberMuteResult{}, mapMemberTransitionError(err)
+	}
+	return UpdateMemberMuteResult{
+		Member:          transition.Member,
+		MutedChanged:    transition.MutedChanged,
+		SpeakingChanged: transition.SpeakingChanged,
+	}, nil
+}
+
+func (s *Service) UpdateMemberSpeakingContext(ctx context.Context, input UpdateMemberSpeakingInput) (UpdateMemberSpeakingResult, error) {
+	normalized, err := validateLeaveInput(LeaveInput{RoomID: input.RoomID, MemberID: input.MemberID})
+	if err != nil {
+		return UpdateMemberSpeakingResult{}, err
+	}
+	if s == nil || s.repository == nil {
+		return UpdateMemberSpeakingResult{}, errors.New("room service is not configured")
+	}
+	repository, ok := s.repository.(memberStateRepository)
+	if !ok {
+		return UpdateMemberSpeakingResult{}, errors.New("room repository does not support member speaking updates")
+	}
+
+	transition, err := repository.UpdateMemberSpeaking(ctx, normalized.roomID, normalized.memberID, input.Speaking)
+	if err != nil {
+		return UpdateMemberSpeakingResult{}, mapMemberTransitionError(err)
+	}
+	return UpdateMemberSpeakingResult{Member: transition.Member, Changed: transition.Changed}, nil
+}
+
+func (s *Service) DisconnectMemberContext(ctx context.Context, input DisconnectMemberInput) (LeaveResult, error) {
+	normalized, err := validateLeaveInput(LeaveInput{RoomID: input.RoomID, MemberID: input.MemberID})
+	if err != nil {
+		return LeaveResult{}, err
+	}
+	if s == nil || s.repository == nil {
+		return LeaveResult{}, errors.New("room service is not configured")
+	}
+	repository, ok := s.repository.(leaveRepository)
+	if !ok {
+		return LeaveResult{}, errors.New("room repository does not support disconnecting members")
+	}
+
+	disconnectedAt := s.now().UTC()
+	transition, err := repository.LeaveRoomMember(ctx, normalized.roomID, normalized.memberID, activeMemberStates(), disconnectedAt, emptyRoomRetention)
+	if err != nil {
+		if errors.Is(err, domain.ErrRoomNotFound) {
+			return LeaveResult{}, ErrRoomNotFound
+		}
+		if errors.Is(err, domain.ErrMemberNotFound) {
+			return LeaveResult{}, ErrMemberNotFound
+		}
+		if errors.Is(err, domain.ErrRoomExpired) {
+			return LeaveResult{}, ErrRoomExpired
+		}
+		return LeaveResult{}, err
+	}
+	return LeaveResult{Room: transition.Room, Member: transition.Member, Transitioned: transition.Transitioned}, nil
 }
 
 func (s *Service) ExpireEmptyRoomsContext(ctx context.Context) (int, error) {
@@ -468,6 +576,21 @@ func buildJoinMember(input normalizedJoinInput, roomID string, memberID string, 
 		VoiceMode:       domain.VoiceModePushToTalk,
 		JoinedAt:        now,
 		LiveKitIdentity: memberID,
+	}
+}
+
+func mapMemberTransitionError(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrRoomNotFound):
+		return ErrRoomNotFound
+	case errors.Is(err, domain.ErrRoomExpired):
+		return ErrRoomExpired
+	case errors.Is(err, domain.ErrMemberNotFound):
+		return ErrMemberNotFound
+	case errors.Is(err, domain.ErrMemberNotActive):
+		return ErrMemberNotActive
+	default:
+		return err
 	}
 }
 
