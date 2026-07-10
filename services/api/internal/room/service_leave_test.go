@@ -58,8 +58,8 @@ func TestLeaveDelegatesLifecycleInputsToRepository(t *testing.T) {
 		t.Fatalf("LeaveContext returned error: %v", err)
 	}
 
-	if result.Room.ID != "room_test" || result.Member.ID != "mem_test" {
-		t.Fatalf("leave result = %#v, want repository room/member", result)
+	if result.Room.ID != "room_test" || result.Member.ID != "mem_test" || !result.Transitioned {
+		t.Fatalf("leave result = %#v, want repository room/member and transitioned=true", result)
 	}
 	if repository.contextValue != "leave-context" {
 		t.Fatalf("leave context value = %v, want leave-context", repository.contextValue)
@@ -149,7 +149,7 @@ func (f *leaveFakeRepository) CreateRoomWithMember(context.Context, domain.Room,
 	return nil
 }
 
-func (f *leaveFakeRepository) LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.Room, domain.Member, error) {
+func (f *leaveFakeRepository) LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.MemberDisconnectTransition, error) {
 	f.leaveCalls++
 	f.contextValue = ctx.Value(testRoomContextKey{})
 	f.leaveRoomID = roomID
@@ -158,9 +158,9 @@ func (f *leaveFakeRepository) LeaveRoomMember(ctx context.Context, roomID string
 	f.leaveAt = leftAt
 	f.leaveRetention = retention
 	if f.leaveErr != nil {
-		return domain.Room{}, domain.Member{}, f.leaveErr
+		return domain.MemberDisconnectTransition{}, f.leaveErr
 	}
-	return f.leaveRoom, f.leaveMember, nil
+	return domain.MemberDisconnectTransition{Room: f.leaveRoom, Member: f.leaveMember, Transitioned: true}, nil
 }
 
 func (f *leaveFakeRepository) ExpireEmptyRooms(ctx context.Context, now time.Time, retention time.Duration) (int, error) {

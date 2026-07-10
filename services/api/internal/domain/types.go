@@ -9,6 +9,7 @@ var (
 	ErrInviteCodeConflict = errors.New("invite code conflict")
 	ErrRoomNotFound       = errors.New("room not found")
 	ErrMemberNotFound     = errors.New("member not found")
+	ErrMemberNotActive    = errors.New("member not active")
 	ErrRoomExpired        = errors.New("room expired")
 	ErrRoomFull           = errors.New("room full")
 )
@@ -62,4 +63,21 @@ type Member struct {
 	VoiceMode       VoiceMode
 	JoinedAt        time.Time
 	LiveKitIdentity string
+}
+
+type MemberMuteTransition struct {
+	Member          Member
+	MutedChanged    bool
+	SpeakingChanged bool
+}
+
+type MemberSpeakingTransition struct {
+	Member  Member
+	Changed bool
+}
+
+type MemberDisconnectTransition struct {
+	Room         Room
+	Member       Member
+	Transitioned bool
 }

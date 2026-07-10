@@ -34,8 +34,8 @@ func TestUpdateMemberMuteContextReturnsAuthoritativeState(t *testing.T) {
 	if repository.contextValue != "state-context" {
 		t.Fatalf("repository context value = %v, want state-context", repository.contextValue)
 	}
-	if repository.findRoomID != "room_state" || repository.findMemberRoomID != "room_state" || repository.findMemberID != "mem_state" {
-		t.Fatalf("repository lookup ids = %q/%q/%q, want trimmed room/member ids", repository.findRoomID, repository.findMemberRoomID, repository.findMemberID)
+	if repository.findRoomID != "" || repository.findMemberRoomID != "" || repository.findMemberID != "" {
+		t.Fatalf("state mutation performed stale authorization lookup: %q/%q/%q", repository.findRoomID, repository.findMemberRoomID, repository.findMemberID)
 	}
 	if repository.updateMuteCalls != 1 || repository.updateMuteRoomID != "room_state" || repository.updateMuteMemberID != "mem_state" || !repository.updateMuteMuted {
 		t.Fatalf("mute update call = %#v, want one trimmed true update", repository)
@@ -67,8 +67,8 @@ func TestUpdateMemberSpeakingContextIgnoresSpeakingTrueForMutedMember(t *testing
 		t.Fatalf("UpdateMemberSpeakingContext returned error: %v", err)
 	}
 
-	if repository.updateSpeakingCalls != 0 {
-		t.Fatalf("update speaking calls = %d, want 0", repository.updateSpeakingCalls)
+	if repository.updateSpeakingCalls != 1 {
+		t.Fatalf("update speaking calls = %d, want 1 atomic eligibility decision", repository.updateSpeakingCalls)
 	}
 	if result.Changed {
 		t.Fatalf("speaking result changed = %v, want false", result.Changed)
@@ -100,8 +100,8 @@ func TestUpdateMemberStateContextRejectsDisconnectedMember(t *testing.T) {
 	if !errors.Is(err, ErrMemberNotActive) {
 		t.Fatalf("UpdateMemberSpeakingContext error = %v, want ErrMemberNotActive", err)
 	}
-	if repository.updateMuteCalls != 0 || repository.updateSpeakingCalls != 0 {
-		t.Fatalf("update calls mute/speaking = %d/%d, want 0/0", repository.updateMuteCalls, repository.updateSpeakingCalls)
+	if repository.updateMuteCalls != 1 || repository.updateSpeakingCalls != 1 {
+		t.Fatalf("atomic update calls mute/speaking = %d/%d, want 1/1", repository.updateMuteCalls, repository.updateSpeakingCalls)
 	}
 }
 
@@ -120,8 +120,8 @@ func TestDisconnectMemberContextDelegatesLifecycleInputsToRepository(t *testing.
 		t.Fatalf("DisconnectMemberContext returned error: %v", err)
 	}
 
-	if result.Room.ID != "room_state" || result.Member.ID != "mem_state" {
-		t.Fatalf("disconnect result = %#v, want repository room/member", result)
+	if result.Room.ID != "room_state" || result.Member.ID != "mem_state" || !result.Transitioned {
+		t.Fatalf("disconnect result = %#v, want repository room/member and transitioned=true", result)
 	}
 	if repository.contextValue != "disconnect-context" {
 		t.Fatalf("repository context value = %v, want disconnect-context", repository.contextValue)
@@ -213,34 +213,53 @@ func (f *stateFakeRepository) FindMemberByRoomAndID(_ context.Context, roomID st
 	return f.member, nil
 }
 
-func (f *stateFakeRepository) UpdateMemberMute(_ context.Context, roomID string, memberID string, muted bool) error {
+func (f *stateFakeRepository) UpdateMemberMute(ctx context.Context, roomID string, memberID string, muted bool) (domain.MemberMuteTransition, error) {
 	f.updateMuteCalls++
+	f.contextValue = ctx.Value(testRoomContextKey{})
 	f.updateMuteRoomID = roomID
 	f.updateMuteMemberID = memberID
 	f.updateMuteMuted = muted
 	if f.updateMuteErr != nil {
-		return f.updateMuteErr
+		return domain.MemberMuteTransition{}, f.updateMuteErr
 	}
-	f.member.Muted = muted
+	if f.member.State != domain.MemberStateOnline {
+		return domain.MemberMuteTransition{}, domain.ErrMemberNotActive
+	}
+	transition := domain.MemberMuteTransition{
+		Member:          f.member,
+		MutedChanged:    f.member.Muted != muted,
+		SpeakingChanged: muted && f.member.Speaking,
+	}
+	transition.Member.Muted = muted
 	if muted {
-		f.member.Speaking = false
+		transition.Member.Speaking = false
 	}
-	return nil
+	f.member = transition.Member
+	return transition, nil
 }
 
-func (f *stateFakeRepository) UpdateMemberSpeaking(_ context.Context, roomID string, memberID string, speaking bool) error {
+func (f *stateFakeRepository) UpdateMemberSpeaking(ctx context.Context, roomID string, memberID string, speaking bool) (domain.MemberSpeakingTransition, error) {
 	f.updateSpeakingCalls++
+	f.contextValue = ctx.Value(testRoomContextKey{})
 	f.updateSpeakingRoomID = roomID
 	f.updateSpeakingID = memberID
 	f.updateSpeakingValue = speaking
 	if f.updateSpeakingErr != nil {
-		return f.updateSpeakingErr
+		return domain.MemberSpeakingTransition{}, f.updateSpeakingErr
 	}
-	f.member.Speaking = speaking
-	return nil
+	if f.member.State != domain.MemberStateOnline {
+		return domain.MemberSpeakingTransition{}, domain.ErrMemberNotActive
+	}
+	transition := domain.MemberSpeakingTransition{Member: f.member}
+	transition.Changed = f.member.Speaking != speaking && (!speaking || !f.member.Muted)
+	if transition.Changed {
+		transition.Member.Speaking = speaking
+		f.member = transition.Member
+	}
+	return transition, nil
 }
 
-func (f *stateFakeRepository) LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.Room, domain.Member, error) {
+func (f *stateFakeRepository) LeaveRoomMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, leftAt time.Time, retention time.Duration) (domain.MemberDisconnectTransition, error) {
 	f.contextValue = ctx.Value(testRoomContextKey{})
 	f.leaveRoomID = roomID
 	f.leaveMemberID = memberID
@@ -248,7 +267,7 @@ func (f *stateFakeRepository) LeaveRoomMember(ctx context.Context, roomID string
 	f.leaveAt = leftAt
 	f.leaveRetention = retention
 	if f.leaveErr != nil {
-		return domain.Room{}, domain.Member{}, f.leaveErr
+		return domain.MemberDisconnectTransition{}, f.leaveErr
 	}
-	return f.leaveRoom, f.leaveMember, nil
+	return domain.MemberDisconnectTransition{Room: f.leaveRoom, Member: f.leaveMember, Transitioned: true}, nil
 }

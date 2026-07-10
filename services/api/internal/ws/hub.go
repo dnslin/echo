@@ -26,6 +26,8 @@ const (
 	DefaultConnectionQueue     = 16
 	DefaultResyncMinInterval   = time.Second
 	DefaultSpeakingMinInterval = 100 * time.Millisecond
+	reconnectRetryDelay        = 100 * time.Millisecond
+	reconnectMutationTimeout   = 5 * time.Second
 )
 
 type Authorizer interface {
@@ -78,16 +80,32 @@ type Hub struct {
 	rooms            map[string]*roomConnections
 	pingCounter      atomic.Int64
 	reconnectCounter atomic.Int64
+	afterFunc        func(time.Duration, func()) reconnectTimer
 }
 
+type reconnectTimer interface {
+	Stop() bool
+}
+
+type reconnectPhase uint8
+
+const (
+	reconnectPhasePending reconnectPhase = iota
+	reconnectPhaseRestorable
+	reconnectPhaseTimingOut
+)
+
 type reconnectingMember struct {
-	deadline   time.Time
-	generation int64
-	timer      *time.Timer
-	retries    int
+	deadline        time.Time
+	generation      int64
+	timer           reconnectTimer
+	phase           reconnectPhase
+	speakingCleared bool
 }
 
 type roomConnections struct {
+	transition           sync.Mutex
+	refs                 int
 	seq                  int64
 	connections          map[*connection]struct{}
 	byMember             map[string]*connection
@@ -103,19 +121,23 @@ type connection struct {
 
 	ctx          context.Context
 	cancel       context.CancelFunc
-	send         chan outboundMessage
+	send         chan outboundGroup
 	pong         chan string
 	done         chan struct{}
 	once         sync.Once
 	lastResyncAt time.Time
 }
 
-type outboundMessage struct {
-	event       eventEnvelope
+type outboundGroup struct {
+	events      []eventEnvelope
 	closeAfter  bool
 	closeCode   websocket.StatusCode
 	closeReason string
 	closeMode   closeMode
+}
+
+func newOutboundGroup(events ...eventEnvelope) outboundGroup {
+	return outboundGroup{events: events}
 }
 
 type eventEnvelope struct {
@@ -325,6 +347,9 @@ func NewHub(config Config) *Hub {
 		resyncMinInterval:   config.ResyncMinInterval,
 		speakingMinInterval: config.SpeakingMinInterval,
 		rooms:               make(map[string]*roomConnections),
+		afterFunc: func(delay time.Duration, callback func()) reconnectTimer {
+			return time.AfterFunc(delay, callback)
+		},
 	}
 }
 
@@ -348,7 +373,7 @@ func (h *Hub) ServeRoomHTTP(w http.ResponseWriter, r *http.Request, roomID strin
 		writeHTTPError(w, http.StatusForbidden, "room_session_mismatch", "连接凭证与房间不匹配")
 		return
 	}
-	authorized, err := h.authorizer.AuthorizeMemberContext(r.Context(), room.AuthorizeMemberInput{RoomID: claims.RoomID, MemberID: claims.MemberID})
+	_, err = h.authorizer.AuthorizeMemberContext(r.Context(), room.AuthorizeMemberInput{RoomID: claims.RoomID, MemberID: claims.MemberID})
 	if err != nil {
 		writeAuthorizeHTTPError(w, err)
 		return
@@ -358,8 +383,8 @@ func (h *Hub) ServeRoomHTTP(w http.ResponseWriter, r *http.Request, roomID strin
 	if err != nil {
 		return
 	}
-	client := h.newConnection(wsConn, authorized.Room.ID, authorized.Member.ID)
-	if err := h.registerWithInitialSnapshot(client, authorized.Member); err != nil {
+	client := h.newConnection(wsConn, claims.RoomID, claims.MemberID)
+	if err := h.registerWithInitialSnapshot(client); err != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), h.writeTimeout)
 		_ = wsjson.Write(ctx, wsConn, h.newRoomErrorEvent(client.roomID, nil, "internal_error", "服务器错误", true))
 		cancel()
@@ -377,21 +402,27 @@ func (h *Hub) NotifyMemberJoined(_ context.Context, roomValue domain.Room, membe
 	if h == nil || strings.TrimSpace(roomValue.ID) == "" || strings.TrimSpace(memberValue.ID) == "" {
 		return
 	}
+	roomState, release := h.acquireRoomState(roomValue.ID, false)
+	if roomState == nil {
+		return
+	}
+	now := h.currentTime()
 	var slowClients []*connection
 	h.mu.Lock()
-	roomState := h.rooms[roomValue.ID]
-	if roomState == nil || len(roomState.connections) == 0 {
+	if len(roomState.connections) == 0 {
 		h.mu.Unlock()
+		release()
 		return
 	}
 	roomState.seq++
-	event := eventEnvelope{Type: "member.joined", Seq: roomState.seq, SentAt: h.currentTime(), Payload: joinedMessagePayload{Member: projectMember(memberValue, "", nil)}}
+	event := eventEnvelope{Type: "member.joined", Seq: roomState.seq, SentAt: now, Payload: joinedMessagePayload{Member: projectMember(memberValue, "", nil)}}
 	for client := range roomState.connections {
-		if !client.enqueueLocked(outboundMessage{event: event}) {
+		if !client.enqueueLocked(newOutboundGroup(event)) {
 			slowClients = append(slowClients, client)
 		}
 	}
 	h.mu.Unlock()
+	release()
 	closeSlowClients(slowClients)
 }
 
@@ -399,29 +430,32 @@ func (h *Hub) NotifyMemberLeft(_ context.Context, roomValue domain.Room, memberV
 	if h == nil || strings.TrimSpace(roomValue.ID) == "" || strings.TrimSpace(memberValue.ID) == "" {
 		return
 	}
-	var slowClients []*connection
-	h.mu.Lock()
-	roomState := h.rooms[roomValue.ID]
+	roomState, release := h.acquireRoomState(roomValue.ID, false)
 	if roomState == nil {
-		h.mu.Unlock()
 		return
 	}
+	now := h.currentTime()
+	var slowClients []*connection
+	var leavingSlow bool
+	var leaving *connection
+	h.mu.Lock()
 	if reconnecting, ok := roomState.reconnecting[memberValue.ID]; ok {
 		if reconnecting.timer != nil {
 			reconnecting.timer.Stop()
 		}
 		delete(roomState.reconnecting, memberValue.ID)
 	}
+	delete(roomState.lastSpeakingAccepted, memberValue.ID)
 	if len(roomState.connections) == 0 {
-		h.pruneRoomStateLocked(roomValue.ID, roomState)
 		h.mu.Unlock()
+		release()
 		return
 	}
 	roomState.seq++
-	event := eventEnvelope{Type: "member.left", Seq: roomState.seq, SentAt: h.currentTime(), Payload: leftMessagePayload{MemberID: memberValue.ID, LeftAt: h.currentTime()}}
-	leaving := roomState.byMember[memberValue.ID]
+	event := eventEnvelope{Type: "member.left", Seq: roomState.seq, SentAt: now, Payload: leftMessagePayload{MemberID: memberValue.ID, LeftAt: now}}
+	leaving = roomState.byMember[memberValue.ID]
 	for client := range roomState.connections {
-		outbound := outboundMessage{event: event}
+		outbound := newOutboundGroup(event)
 		if client == leaving {
 			outbound.closeAfter = true
 			outbound.closeCode = websocket.StatusNormalClosure
@@ -429,10 +463,21 @@ func (h *Hub) NotifyMemberLeft(_ context.Context, roomValue domain.Room, memberV
 			outbound.closeMode = closeModeNoReconnect
 		}
 		if !client.enqueueLocked(outbound) {
-			slowClients = append(slowClients, client)
+			if client == leaving {
+				leavingSlow = true
+			} else {
+				slowClients = append(slowClients, client)
+			}
 		}
 	}
+	if leaving != nil {
+		h.removeConnectionLocked(roomState, leaving)
+	}
 	h.mu.Unlock()
+	release()
+	if leavingSlow {
+		leaving.closeWithMode(closeModeNoReconnect, websocket.StatusPolicyViolation, "slow consumer")
+	}
 	closeSlowClients(slowClients)
 }
 
@@ -452,26 +497,69 @@ func (h *Hub) newConnection(wsConn *websocket.Conn, roomID string, memberID stri
 		memberID: memberID,
 		ctx:      ctx,
 		cancel:   cancel,
-		send:     make(chan outboundMessage, h.connectionQueueSize),
+		send:     make(chan outboundGroup, h.connectionQueueSize),
 		pong:     make(chan string, 4),
 		done:     make(chan struct{}),
 	}
 }
 
-func (h *Hub) registerWithInitialSnapshot(client *connection, authorizedMember domain.Member) error {
+func (h *Hub) registerWithInitialSnapshot(client *connection) error {
+	roomState, release := h.acquireRoomState(client.roomID, true)
 	var old *connection
 	var slowClients []*connection
+
+	now := h.currentTime()
 	h.mu.Lock()
-	roomState := h.roomStateLocked(client.roomID)
 	sharedSeq := roomState.seq
-	_, restoring := roomState.reconnecting[client.memberID]
-	snapshot, err := h.buildSnapshotEventAtSeqLocked(client.ctx, client.roomID, client.memberID, sharedSeq, client.memberID)
-	if err != nil {
+	reconnecting, restoring := roomState.reconnecting[client.memberID]
+	if restoring && (reconnecting.phase != reconnectPhaseRestorable || !now.Before(reconnecting.deadline)) {
 		h.mu.Unlock()
+		release()
+		return errors.New("member reconnect is not restorable")
+	}
+	reconnectingSnapshot := copyReconnectingMembers(roomState.reconnecting)
+	h.mu.Unlock()
+
+	snapshot, err := h.buildSnapshotEventAtSeq(client.ctx, client.roomID, client.memberID, sharedSeq, client.memberID, reconnectingSnapshot)
+	if err != nil {
+		release()
 		return err
 	}
-	if !client.enqueueLocked(outboundMessage{event: snapshot}) {
+	authorized, err := h.authorizer.AuthorizeMemberContext(client.ctx, room.AuthorizeMemberInput{RoomID: client.roomID, MemberID: client.memberID})
+	if err != nil {
+		release()
+		return err
+	}
+	if authorized.Room.ID != client.roomID || authorized.Member.ID != client.memberID {
+		release()
+		return errors.New("authorized member identity changed during registration")
+	}
+
+	now = h.currentTime()
+	h.mu.Lock()
+	reconnecting, restoring = roomState.reconnecting[client.memberID]
+	if restoring && (reconnecting.phase != reconnectPhaseRestorable || !now.Before(reconnecting.deadline)) {
 		h.mu.Unlock()
+		release()
+		return errors.New("member reconnect is not restorable")
+	}
+	initialEvents := []eventEnvelope{snapshot}
+	restoredSeq := roomState.seq
+	if restoring {
+		restoredSeq++
+		initialEvents = append(initialEvents, eventEnvelope{
+			Type:   "member.restored",
+			Seq:    restoredSeq,
+			SentAt: now,
+			Payload: restoredMessagePayload{
+				Member:     projectMember(authorized.Member, client.memberID, nil),
+				RestoredAt: now,
+			},
+		})
+	}
+	if client.ctx.Err() != nil || !client.enqueueLocked(newOutboundGroup(initialEvents...)) {
+		h.mu.Unlock()
+		release()
 		client.close(websocket.StatusPolicyViolation, "slow consumer")
 		return errors.New("initial snapshot queue is full")
 	}
@@ -482,27 +570,31 @@ func (h *Hub) registerWithInitialSnapshot(client *connection, authorizedMember d
 	roomState.connections[client] = struct{}{}
 	roomState.byMember[client.memberID] = client
 	if restoring {
-		if reconnecting := roomState.reconnecting[client.memberID]; reconnecting.timer != nil {
+		if reconnecting.timer != nil {
 			reconnecting.timer.Stop()
 		}
-		roomState.seq++
-		restoredEvent := eventEnvelope{
-			Type:   "member.restored",
-			Seq:    roomState.seq,
-			SentAt: h.currentTime(),
-			Payload: restoredMessagePayload{
-				Member:     projectMember(authorizedMember, "", nil),
-				RestoredAt: h.currentTime(),
-			},
-		}
+		roomState.seq = restoredSeq
 		for candidate := range roomState.connections {
-			if !candidate.enqueueLocked(outboundMessage{event: restoredEvent}) {
+			if candidate == client {
+				continue
+			}
+			restoredEvent := eventEnvelope{
+				Type:   "member.restored",
+				Seq:    restoredSeq,
+				SentAt: now,
+				Payload: restoredMessagePayload{
+					Member:     projectMember(authorized.Member, candidate.memberID, nil),
+					RestoredAt: now,
+				},
+			}
+			if !candidate.enqueueLocked(newOutboundGroup(restoredEvent)) {
 				slowClients = append(slowClients, candidate)
 			}
 		}
 		delete(roomState.reconnecting, client.memberID)
 	}
 	h.mu.Unlock()
+	release()
 	if old != nil {
 		old.closeWithMode(closeModeNoReconnect, websocket.StatusNormalClosure, "connection replaced")
 	}
@@ -511,14 +603,18 @@ func (h *Hub) registerWithInitialSnapshot(client *connection, authorizedMember d
 }
 
 func (h *Hub) unregister(client *connection) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	roomState := h.rooms[client.roomID]
+	roomState, release := h.acquireRoomState(client.roomID, false)
 	if roomState == nil {
 		return
 	}
+	h.mu.Lock()
 	h.removeConnectionLocked(roomState, client)
-	h.pruneRoomStateLocked(client.roomID, roomState)
+	h.mu.Unlock()
+	release()
+}
+
+func connectionIsCurrentLocked(roomState *roomConnections, client *connection) bool {
+	return roomState != nil && client != nil && client.ctx.Err() == nil && roomState.byMember[client.memberID] == client
 }
 
 func (h *Hub) removeConnectionLocked(roomState *roomConnections, client *connection) {
@@ -529,8 +625,33 @@ func (h *Hub) removeConnectionLocked(roomState *roomConnections, client *connect
 }
 
 func (h *Hub) pruneRoomStateLocked(roomID string, roomState *roomConnections) {
-	if len(roomState.connections) == 0 && len(roomState.reconnecting) == 0 {
+	if roomState.refs == 0 && len(roomState.connections) == 0 && len(roomState.reconnecting) == 0 {
 		delete(h.rooms, roomID)
+	}
+}
+
+// acquireRoomState pins the room before waiting for its transition gate.
+// Callers may briefly take h.mu while holding the gate, but never run external I/O under h.mu.
+func (h *Hub) acquireRoomState(roomID string, create bool) (*roomConnections, func()) {
+	h.mu.Lock()
+	roomState := h.rooms[roomID]
+	if roomState == nil && create {
+		roomState = h.roomStateLocked(roomID)
+	}
+	if roomState == nil {
+		h.mu.Unlock()
+		return nil, func() {}
+	}
+	roomState.refs++
+	h.mu.Unlock()
+
+	roomState.transition.Lock()
+	return roomState, func() {
+		roomState.transition.Unlock()
+		h.mu.Lock()
+		roomState.refs--
+		h.pruneRoomStateLocked(roomID, roomState)
+		h.mu.Unlock()
 	}
 }
 
@@ -566,38 +687,6 @@ func (h *Hub) newPrivateEvent(roomID string, eventType string, payload any) even
 	return eventEnvelope{Type: eventType, Seq: h.currentSeq(roomID), SentAt: h.currentTime(), Payload: payload}
 }
 
-func (h *Hub) newSharedEventForRoom(roomID string, eventType string, payload any) (eventEnvelope, []*connection, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	roomState := h.rooms[roomID]
-	if roomState == nil || len(roomState.connections) == 0 {
-		return eventEnvelope{}, nil, false
-	}
-	roomState.seq++
-	event := eventEnvelope{Type: eventType, Seq: roomState.seq, SentAt: h.currentTime(), Payload: payload}
-	clients := make([]*connection, 0, len(roomState.connections))
-	for client := range roomState.connections {
-		clients = append(clients, client)
-	}
-	return event, clients, true
-}
-
-func (h *Hub) newSharedMemberLeftEvent(roomID string, memberID string, payload leftMessagePayload) (eventEnvelope, []*connection, *connection, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	roomState := h.rooms[roomID]
-	if roomState == nil || len(roomState.connections) == 0 {
-		return eventEnvelope{}, nil, nil, false
-	}
-	roomState.seq++
-	event := eventEnvelope{Type: "member.left", Seq: roomState.seq, SentAt: h.currentTime(), Payload: payload}
-	clients := make([]*connection, 0, len(roomState.connections))
-	for client := range roomState.connections {
-		clients = append(clients, client)
-	}
-	return event, clients, roomState.byMember[memberID], true
-}
-
 func (h *Hub) currentTime() time.Time {
 	if h == nil || h.now == nil {
 		return time.Now().UTC()
@@ -610,30 +699,54 @@ func (h *Hub) currentTime() time.Time {
 }
 
 func (c *connection) sendSnapshot() {
-	var slowClient bool
-	c.hub.mu.Lock()
-	event, err := c.hub.buildSnapshotEventAtSeqLocked(c.ctx, c.roomID, c.memberID, c.hub.currentSeqLocked(c.roomID), "")
-	if err == nil {
-		slowClient = !c.enqueueLocked(outboundMessage{event: event})
-	}
-	c.hub.mu.Unlock()
-	if err != nil {
-		c.sendRoomError(nil, "internal_error", "服务器错误", true)
-		c.enqueue(outboundMessage{event: eventEnvelope{}, closeAfter: true, closeCode: websocket.StatusInternalError, closeReason: "snapshot failed"})
+	roomState, release := c.hub.acquireRoomState(c.roomID, false)
+	if roomState == nil {
+		c.sendRoomError(nil, "member_not_active", "成员不在房间中", false)
 		return
 	}
+	c.hub.mu.Lock()
+	if !connectionIsCurrentLocked(roomState, c) {
+		c.hub.mu.Unlock()
+		release()
+		return
+	}
+	seq := roomState.seq
+	reconnecting := copyReconnectingMembers(roomState.reconnecting)
+	c.hub.mu.Unlock()
+
+	event, err := c.hub.buildSnapshotEventAtSeq(c.ctx, c.roomID, c.memberID, seq, "", reconnecting)
+	if err != nil {
+		errorEvent := c.hub.newRoomErrorEvent(c.roomID, nil, "internal_error", "服务器错误", true)
+		release()
+		c.enqueue(outboundGroup{
+			events:      []eventEnvelope{errorEvent},
+			closeAfter:  true,
+			closeCode:   websocket.StatusInternalError,
+			closeReason: "snapshot failed",
+		})
+		return
+	}
+	c.hub.mu.Lock()
+	slowClient := connectionIsCurrentLocked(roomState, c) && !c.enqueueLocked(newOutboundGroup(event))
+	c.hub.mu.Unlock()
+	release()
 	if slowClient {
 		c.close(websocket.StatusPolicyViolation, "slow consumer")
 	}
 }
 
 func (h *Hub) buildSnapshotEvent(ctx context.Context, roomID string, selfMemberID string) (eventEnvelope, error) {
+	roomState, release := h.acquireRoomState(roomID, true)
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.buildSnapshotEventAtSeqLocked(ctx, roomID, selfMemberID, h.currentSeqLocked(roomID), "")
+	seq := roomState.seq
+	reconnecting := copyReconnectingMembers(roomState.reconnecting)
+	h.mu.Unlock()
+	event, err := h.buildSnapshotEventAtSeq(ctx, roomID, selfMemberID, seq, "", reconnecting)
+	release()
+	return event, err
 }
 
-func (h *Hub) buildSnapshotEventAtSeqLocked(ctx context.Context, roomID string, selfMemberID string, seq int64, ignoreReconnectMemberID string) (eventEnvelope, error) {
+func (h *Hub) buildSnapshotEventAtSeq(ctx context.Context, roomID string, selfMemberID string, seq int64, ignoreReconnectMemberID string, reconnecting map[string]reconnectingMember) (eventEnvelope, error) {
 	roomValue, err := h.snapshotStore.FindRoomByID(ctx, roomID)
 	if err != nil {
 		return eventEnvelope{}, err
@@ -641,10 +754,6 @@ func (h *Hub) buildSnapshotEventAtSeqLocked(ctx context.Context, roomID string, 
 	members, err := h.snapshotStore.ListRoomMembersByStates(ctx, roomID, activeMemberStates())
 	if err != nil {
 		return eventEnvelope{}, err
-	}
-	reconnecting := map[string]reconnectingMember(nil)
-	if roomState := h.rooms[roomID]; roomState != nil {
-		reconnecting = roomState.reconnecting
 	}
 	return eventEnvelope{
 		Type:   "room.snapshot",
@@ -660,6 +769,17 @@ func (h *Hub) buildSnapshotEventAtSeqLocked(ctx context.Context, roomID string, 
 			ReconnectWindowMS:   durationMillis(h.reconnectWindow),
 		},
 	}, nil
+}
+
+func copyReconnectingMembers(source map[string]reconnectingMember) map[string]reconnectingMember {
+	if len(source) == 0 {
+		return nil
+	}
+	copied := make(map[string]reconnectingMember, len(source))
+	for memberID, reconnecting := range source {
+		copied[memberID] = reconnecting
+	}
+	return copied
 }
 
 func (c *connection) readLoop() {
@@ -724,28 +844,42 @@ func (c *connection) handleMuteChanged(raw json.RawMessage, requestID *string) {
 		c.sendRoomError(requestID, "invalid_message", "消息格式无效", false)
 		return
 	}
+	roomState, release := c.hub.acquireRoomState(c.roomID, false)
+	if roomState == nil {
+		return
+	}
+	c.hub.mu.Lock()
+	current := connectionIsCurrentLocked(roomState, c)
+	c.hub.mu.Unlock()
+	if !current {
+		release()
+		return
+	}
+
 	result, err := c.hub.stateMutator.UpdateMemberMuteContext(c.ctx, room.UpdateMemberMuteInput{
 		RoomID:   c.roomID,
 		MemberID: c.memberID,
 		Muted:    *payload.Muted,
 	})
 	if err != nil {
+		release()
 		c.sendStateMutationError(requestID, err)
 		return
 	}
 	if !result.MutedChanged && !result.SpeakingChanged {
+		release()
 		return
 	}
 
 	now := c.hub.currentTime()
 	var slowClients []*connection
 	c.hub.mu.Lock()
-	roomState := c.hub.rooms[c.roomID]
-	if roomState != nil && len(roomState.connections) > 0 {
+	if connectionIsCurrentLocked(roomState, c) && len(roomState.connections) > 0 {
+		events := make([]eventEnvelope, 0, 2)
 		if result.SpeakingChanged {
-			roomState.lastSpeakingAccepted[c.memberID] = now
+			delete(roomState.lastSpeakingAccepted, c.memberID)
 			roomState.seq++
-			event := eventEnvelope{
+			events = append(events, eventEnvelope{
 				Type:   "member.speaking_changed",
 				Seq:    roomState.seq,
 				SentAt: now,
@@ -754,16 +888,11 @@ func (c *connection) handleMuteChanged(raw json.RawMessage, requestID *string) {
 					Speaking:  result.Member.Speaking,
 					ChangedAt: now,
 				},
-			}
-			for client := range roomState.connections {
-				if !client.enqueueLocked(outboundMessage{event: event}) {
-					slowClients = append(slowClients, client)
-				}
-			}
+			})
 		}
 		if result.MutedChanged {
 			roomState.seq++
-			event := eventEnvelope{
+			events = append(events, eventEnvelope{
 				Type:   "member.muted_changed",
 				Seq:    roomState.seq,
 				SentAt: now,
@@ -772,15 +901,16 @@ func (c *connection) handleMuteChanged(raw json.RawMessage, requestID *string) {
 					Muted:     result.Member.Muted,
 					ChangedAt: now,
 				},
-			}
-			for client := range roomState.connections {
-				if !client.enqueueLocked(outboundMessage{event: event}) {
-					slowClients = append(slowClients, client)
-				}
+			})
+		}
+		for client := range roomState.connections {
+			if !client.enqueueLocked(newOutboundGroup(events...)) {
+				slowClients = append(slowClients, client)
 			}
 		}
 	}
 	c.hub.mu.Unlock()
+	release()
 	closeSlowClients(slowClients)
 }
 
@@ -790,27 +920,39 @@ func (c *connection) handleSpeakingChanged(raw json.RawMessage, requestID *strin
 		c.sendRoomError(requestID, "invalid_message", "消息格式无效", false)
 		return
 	}
-	now := c.hub.currentTime()
-	if *payload.Speaking && c.hub.shouldThrottleSpeaking(c.roomID, c.memberID, now) {
+	roomState, release := c.hub.acquireRoomState(c.roomID, false)
+	if roomState == nil {
 		return
 	}
+	now := c.hub.currentTime()
+	c.hub.mu.Lock()
+	current := connectionIsCurrentLocked(roomState, c)
+	lastAccepted := roomState.lastSpeakingAccepted[c.memberID]
+	throttled := *payload.Speaking && c.hub.speakingMinInterval > 0 && !lastAccepted.IsZero() && now.Sub(lastAccepted) < c.hub.speakingMinInterval
+	c.hub.mu.Unlock()
+	if !current || throttled {
+		release()
+		return
+	}
+
 	result, err := c.hub.stateMutator.UpdateMemberSpeakingContext(c.ctx, room.UpdateMemberSpeakingInput{
 		RoomID:   c.roomID,
 		MemberID: c.memberID,
 		Speaking: *payload.Speaking,
 	})
 	if err != nil {
+		release()
 		c.sendStateMutationError(requestID, err)
 		return
 	}
 	if !result.Changed {
+		release()
 		return
 	}
 
 	var slowClients []*connection
 	c.hub.mu.Lock()
-	roomState := c.hub.rooms[c.roomID]
-	if roomState != nil && len(roomState.connections) > 0 {
+	if connectionIsCurrentLocked(roomState, c) && len(roomState.connections) > 0 {
 		roomState.lastSpeakingAccepted[c.memberID] = now
 		roomState.seq++
 		event := eventEnvelope{
@@ -824,24 +966,14 @@ func (c *connection) handleSpeakingChanged(raw json.RawMessage, requestID *strin
 			},
 		}
 		for client := range roomState.connections {
-			if !client.enqueueLocked(outboundMessage{event: event}) {
+			if !client.enqueueLocked(newOutboundGroup(event)) {
 				slowClients = append(slowClients, client)
 			}
 		}
 	}
 	c.hub.mu.Unlock()
+	release()
 	closeSlowClients(slowClients)
-}
-
-func (h *Hub) shouldThrottleSpeaking(roomID string, memberID string, now time.Time) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	roomState := h.rooms[roomID]
-	if roomState == nil {
-		return false
-	}
-	lastAccepted := roomState.lastSpeakingAccepted[memberID]
-	return h.speakingMinInterval > 0 && !lastAccepted.IsZero() && now.Sub(lastAccepted) < h.speakingMinInterval
 }
 
 func (c *connection) sendStateMutationError(requestID *string, err error) {
@@ -906,19 +1038,28 @@ func (c *connection) writeLoop() {
 		select {
 		case <-c.done:
 			return
+		default:
+		}
+		select {
+		case <-c.done:
+			return
 		case outbound := <-c.send:
-			if outbound.event.Type == "" {
-				if outbound.closeAfter {
-					c.closeWithMode(outbound.closeMode, outbound.closeCode, outbound.closeReason)
-				}
-				continue
-			}
-			ctx, cancel := context.WithTimeout(c.ctx, c.hub.writeTimeout)
-			err := wsjson.Write(ctx, c.ws, outbound.event)
-			cancel()
-			if err != nil {
-				c.close(websocket.StatusInternalError, "write failed")
+			select {
+			case <-c.done:
 				return
+			default:
+			}
+			for _, event := range outbound.events {
+				if event.Type == "" {
+					continue
+				}
+				ctx, cancel := context.WithTimeout(c.ctx, c.hub.writeTimeout)
+				err := wsjson.Write(ctx, c.ws, event)
+				cancel()
+				if err != nil {
+					c.close(websocket.StatusInternalError, "write failed")
+					return
+				}
 			}
 			if outbound.closeAfter {
 				c.closeWithMode(outbound.closeMode, outbound.closeCode, outbound.closeReason)
@@ -928,7 +1069,7 @@ func (c *connection) writeLoop() {
 	}
 }
 
-func (c *connection) enqueue(outbound outboundMessage) bool {
+func (c *connection) enqueue(outbound outboundGroup) bool {
 	if c.enqueueLocked(outbound) {
 		return true
 	}
@@ -936,10 +1077,16 @@ func (c *connection) enqueue(outbound outboundMessage) bool {
 	return false
 }
 
-func (c *connection) enqueueLocked(outbound outboundMessage) bool {
+func (c *connection) enqueueLocked(outbound outboundGroup) bool {
+	if c.ctx.Err() != nil {
+		return false
+	}
 	select {
 	case <-c.done:
 		return false
+	default:
+	}
+	select {
 	case c.send <- outbound:
 		return true
 	default:
@@ -948,9 +1095,10 @@ func (c *connection) enqueueLocked(outbound outboundMessage) bool {
 }
 
 func (c *connection) enqueuePrivate(eventType string, payload any) bool {
+	now := c.hub.currentTime()
 	c.hub.mu.Lock()
-	event := eventEnvelope{Type: eventType, Seq: c.hub.currentSeqLocked(c.roomID), SentAt: c.hub.currentTime(), Payload: payload}
-	queued := c.enqueueLocked(outboundMessage{event: event})
+	event := eventEnvelope{Type: eventType, Seq: c.hub.currentSeqLocked(c.roomID), SentAt: now, Payload: payload}
+	queued := c.enqueueLocked(newOutboundGroup(event))
 	c.hub.mu.Unlock()
 	if !queued {
 		c.close(websocket.StatusPolicyViolation, "slow consumer")
@@ -985,156 +1133,327 @@ func (c *connection) close(code websocket.StatusCode, reason string) {
 func (c *connection) closeWithMode(mode closeMode, code websocket.StatusCode, reason string) {
 	c.once.Do(func() {
 		c.cancel()
-		_ = c.ws.Close(code, reason)
+		close(c.done)
 		if mode == closeModeReconnect {
 			c.hub.handleUnexpectedDisconnect(c)
 		} else {
 			c.hub.unregister(c)
 		}
-		close(c.done)
+		if c.ws != nil {
+			_ = c.ws.Close(code, reason)
+		}
 	})
 }
 
 func (h *Hub) handleUnexpectedDisconnect(client *connection) {
-	h.mu.Lock()
-	roomState := h.rooms[client.roomID]
+	lostAt := h.currentTime()
+	roomState, release := h.acquireRoomState(client.roomID, false)
 	if roomState == nil {
+		return
+	}
+
+	deadline := lostAt.Add(h.reconnectWindow)
+	generation := h.reconnectCounter.Add(1)
+	var previousTimer reconnectTimer
+	h.mu.Lock()
+	if roomState.byMember[client.memberID] != client {
+		h.removeConnectionLocked(roomState, client)
 		h.mu.Unlock()
+		release()
 		return
 	}
 	h.removeConnectionLocked(roomState, client)
-	if roomState.byMember[client.memberID] != nil {
-		h.pruneRoomStateLocked(client.roomID, roomState)
-		h.mu.Unlock()
-		return
+	if existing, ok := roomState.reconnecting[client.memberID]; ok {
+		previousTimer = existing.timer
 	}
-
-	speakingResult, err := h.stateMutator.UpdateMemberSpeakingContext(context.Background(), room.UpdateMemberSpeakingInput{
-		RoomID:   client.roomID,
-		MemberID: client.memberID,
-		Speaking: false,
-	})
-	if err != nil && isStableDisconnectError(err) {
-		h.pruneRoomStateLocked(client.roomID, roomState)
-		h.mu.Unlock()
-		return
+	roomState.reconnecting[client.memberID] = reconnectingMember{
+		deadline:   deadline,
+		generation: generation,
+		phase:      reconnectPhasePending,
 	}
-	speakingChanged := err != nil || speakingResult.Changed
-	if existing, ok := roomState.reconnecting[client.memberID]; ok && existing.timer != nil {
-		existing.timer.Stop()
-	}
-	generation := h.reconnectCounter.Add(1)
-	now := h.currentTime()
-	deadline := now.Add(h.reconnectWindow)
-	reconnecting := reconnectingMember{deadline: deadline, generation: generation}
-	reconnecting.timer = time.AfterFunc(h.reconnectWindow, func() {
-		h.handleReconnectTimeout(client.roomID, client.memberID, generation)
-	})
-	roomState.reconnecting[client.memberID] = reconnecting
-
-	var slowClients []*connection
-	if len(roomState.connections) > 0 {
-		if speakingChanged {
-			roomState.lastSpeakingAccepted[client.memberID] = now
-			roomState.seq++
-			event := eventEnvelope{
-				Type:   "member.speaking_changed",
-				Seq:    roomState.seq,
-				SentAt: now,
-				Payload: speakingChangedMessagePayload{
-					MemberID:  client.memberID,
-					Speaking:  false,
-					ChangedAt: now,
-				},
-			}
-			for candidate := range roomState.connections {
-				if !candidate.enqueueLocked(outboundMessage{event: event}) {
-					slowClients = append(slowClients, candidate)
-				}
-			}
-		}
-		roomState.seq++
-		event := eventEnvelope{
-			Type:   "member.reconnecting",
-			Seq:    roomState.seq,
-			SentAt: now,
-			Payload: reconnectingMessagePayload{
-				MemberID:          client.memberID,
-				ReconnectUntil:    deadline,
-				ReconnectWindowMS: durationMillis(h.reconnectWindow),
-			},
-		}
-		for candidate := range roomState.connections {
-			if !candidate.enqueueLocked(outboundMessage{event: event}) {
-				slowClients = append(slowClients, candidate)
-			}
-		}
-	}
-	h.pruneRoomStateLocked(client.roomID, roomState)
+	delete(roomState.lastSpeakingAccepted, client.memberID)
 	h.mu.Unlock()
+	if previousTimer != nil {
+		previousTimer.Stop()
+	}
+
+	slowClients := h.advancePendingReconnect(roomState, client.roomID, client.memberID, generation)
+	release()
 	closeSlowClients(slowClients)
 }
 
+func (h *Hub) advancePendingReconnect(roomState *roomConnections, roomID string, memberID string, generation int64) []*connection {
+	reconnecting, ok := h.reconnectingMemberForGeneration(roomState, memberID, generation)
+	if !ok || reconnecting.phase != reconnectPhasePending {
+		return nil
+	}
+	if !h.currentTime().Before(reconnecting.deadline) {
+		if !h.transitionReconnectPhase(roomState, memberID, generation, reconnectPhasePending, reconnectPhaseTimingOut) {
+			return nil
+		}
+		return h.completeReconnectTimeout(roomState, roomID, memberID, generation)
+	}
+
+	mutationContext, cancel := context.WithTimeout(context.Background(), reconnectMutationTimeout)
+	speakingResult, err := h.stateMutator.UpdateMemberSpeakingContext(mutationContext, room.UpdateMemberSpeakingInput{
+		RoomID:   roomID,
+		MemberID: memberID,
+		Speaking: false,
+	})
+	cancel()
+	if err != nil {
+		if isStableDisconnectError(err) {
+			h.clearReconnectMember(roomState, memberID, generation)
+			return nil
+		}
+		h.scheduleReconnect(roomState, roomID, memberID, generation, reconnectRetryDelayUntil(reconnecting.deadline, h.currentTime()))
+		return nil
+	}
+
+	now := h.currentTime()
+	if !now.Before(reconnecting.deadline) {
+		if !h.transitionReconnectPhase(roomState, memberID, generation, reconnectPhasePending, reconnectPhaseTimingOut) {
+			return nil
+		}
+		return h.completeReconnectTimeout(roomState, roomID, memberID, generation)
+	}
+	if !h.transitionReconnectPhase(roomState, memberID, generation, reconnectPhasePending, reconnectPhaseRestorable) {
+		return nil
+	}
+	h.scheduleReconnect(roomState, roomID, memberID, generation, reconnecting.deadline.Sub(now))
+	return h.broadcastReconnectAvailable(roomState, memberID, generation, reconnecting.deadline, speakingResult.Changed, now)
+}
+
 func (h *Hub) handleReconnectTimeout(roomID string, memberID string, generation int64) {
-	h.mu.Lock()
-	roomState := h.rooms[roomID]
+	roomState, release := h.acquireRoomState(roomID, false)
 	if roomState == nil {
-		h.mu.Unlock()
 		return
 	}
+
+	h.mu.Lock()
+	reconnecting, ok := roomState.reconnecting[memberID]
+	if !ok || reconnecting.generation != generation {
+		h.mu.Unlock()
+		release()
+		return
+	}
+	timer := reconnecting.timer
+	reconnecting.timer = nil
+	roomState.reconnecting[memberID] = reconnecting
+	connected := roomState.byMember[memberID] != nil
+	h.mu.Unlock()
+	if timer != nil {
+		timer.Stop()
+	}
+	if connected {
+		h.clearReconnectMember(roomState, memberID, generation)
+		release()
+		return
+	}
+
+	var slowClients []*connection
+	now := h.currentTime()
+	switch reconnecting.phase {
+	case reconnectPhasePending:
+		if now.Before(reconnecting.deadline) {
+			slowClients = h.advancePendingReconnect(roomState, roomID, memberID, generation)
+			break
+		}
+		if h.transitionReconnectPhase(roomState, memberID, generation, reconnectPhasePending, reconnectPhaseTimingOut) {
+			slowClients = h.completeReconnectTimeout(roomState, roomID, memberID, generation)
+		}
+	case reconnectPhaseRestorable:
+		if now.Before(reconnecting.deadline) {
+			h.scheduleReconnect(roomState, roomID, memberID, generation, reconnecting.deadline.Sub(now))
+			break
+		}
+		if h.transitionReconnectPhase(roomState, memberID, generation, reconnectPhaseRestorable, reconnectPhaseTimingOut) {
+			slowClients = h.completeReconnectTimeout(roomState, roomID, memberID, generation)
+		}
+	case reconnectPhaseTimingOut:
+		slowClients = h.completeReconnectTimeout(roomState, roomID, memberID, generation)
+	}
+	release()
+	closeSlowClients(slowClients)
+}
+
+func (h *Hub) completeReconnectTimeout(roomState *roomConnections, roomID string, memberID string, generation int64) []*connection {
+	mutationContext, cancel := context.WithTimeout(context.Background(), reconnectMutationTimeout)
+	result, err := h.stateMutator.DisconnectMemberContext(mutationContext, room.DisconnectMemberInput{RoomID: roomID, MemberID: memberID})
+	cancel()
+	if err != nil {
+		if isStableDisconnectError(err) {
+			h.clearReconnectMember(roomState, memberID, generation)
+			return nil
+		}
+		h.scheduleReconnect(roomState, roomID, memberID, generation, reconnectRetryDelay)
+		return nil
+	}
+
+	h.clearReconnectMember(roomState, memberID, generation)
+	if !result.Transitioned {
+		return nil
+	}
+	return h.broadcastReconnectDisconnected(roomState, memberID, h.currentTime())
+}
+
+func (h *Hub) reconnectingMemberForGeneration(roomState *roomConnections, memberID string, generation int64) (reconnectingMember, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	reconnecting, ok := roomState.reconnecting[memberID]
+	return reconnecting, ok && reconnecting.generation == generation
+}
+
+func (h *Hub) transitionReconnectPhase(roomState *roomConnections, memberID string, generation int64, from reconnectPhase, to reconnectPhase) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	reconnecting, ok := roomState.reconnecting[memberID]
+	if !ok || reconnecting.generation != generation || reconnecting.phase != from {
+		return false
+	}
+	reconnecting.phase = to
+	if to == reconnectPhaseRestorable {
+		reconnecting.speakingCleared = true
+	}
+	roomState.reconnecting[memberID] = reconnecting
+	return true
+}
+
+func (h *Hub) scheduleReconnect(roomState *roomConnections, roomID string, memberID string, generation int64, delay time.Duration) {
+	if delay < 0 {
+		delay = 0
+	}
+
+	h.mu.Lock()
 	reconnecting, ok := roomState.reconnecting[memberID]
 	if !ok || reconnecting.generation != generation {
 		h.mu.Unlock()
 		return
 	}
-	if roomState.byMember[memberID] != nil {
-		delete(roomState.reconnecting, memberID)
-		h.pruneRoomStateLocked(roomID, roomState)
-		h.mu.Unlock()
-		return
-	}
-
-	_, err := h.stateMutator.DisconnectMemberContext(context.Background(), room.DisconnectMemberInput{RoomID: roomID, MemberID: memberID})
-	if err != nil && !isStableDisconnectError(err) && reconnecting.retries == 0 {
-		reconnecting.retries = 1
-		reconnecting.timer = time.AfterFunc(100*time.Millisecond, func() {
-			h.handleReconnectTimeout(roomID, memberID, generation)
-		})
-		roomState.reconnecting[memberID] = reconnecting
-		h.mu.Unlock()
-		return
-	}
-	if err != nil {
-		delete(roomState.reconnecting, memberID)
-		h.pruneRoomStateLocked(roomID, roomState)
-		h.mu.Unlock()
-		return
-	}
-
-	delete(roomState.reconnecting, memberID)
-	now := h.currentTime()
-	var slowClients []*connection
-	if len(roomState.connections) > 0 {
-		roomState.seq++
-		event := eventEnvelope{
-			Type:   "member.disconnected",
-			Seq:    roomState.seq,
-			SentAt: now,
-			Payload: disconnectedMessagePayload{
-				MemberID:       memberID,
-				DisconnectedAt: now,
-				Reason:         "reconnect_timeout",
-			},
-		}
-		for candidate := range roomState.connections {
-			if !candidate.enqueueLocked(outboundMessage{event: event}) {
-				slowClients = append(slowClients, candidate)
-			}
-		}
-	}
-	h.pruneRoomStateLocked(roomID, roomState)
+	previousTimer := reconnecting.timer
+	reconnecting.timer = nil
+	roomState.reconnecting[memberID] = reconnecting
 	h.mu.Unlock()
-	closeSlowClients(slowClients)
+	if previousTimer != nil {
+		previousTimer.Stop()
+	}
+
+	afterFunc := h.afterFunc
+	if afterFunc == nil {
+		afterFunc = func(delay time.Duration, callback func()) reconnectTimer {
+			return time.AfterFunc(delay, callback)
+		}
+	}
+	timer := afterFunc(delay, func() {
+		h.handleReconnectTimeout(roomID, memberID, generation)
+	})
+
+	h.mu.Lock()
+	reconnecting, ok = roomState.reconnecting[memberID]
+	if ok && reconnecting.generation == generation {
+		reconnecting.timer = timer
+		roomState.reconnecting[memberID] = reconnecting
+	}
+	h.mu.Unlock()
+	if !ok || reconnecting.generation != generation {
+		if timer != nil {
+			timer.Stop()
+		}
+	}
+}
+
+func (h *Hub) clearReconnectMember(roomState *roomConnections, memberID string, generation int64) {
+	var timer reconnectTimer
+	h.mu.Lock()
+	if reconnecting, ok := roomState.reconnecting[memberID]; ok && reconnecting.generation == generation {
+		timer = reconnecting.timer
+		delete(roomState.reconnecting, memberID)
+		delete(roomState.lastSpeakingAccepted, memberID)
+	}
+	h.mu.Unlock()
+	if timer != nil {
+		timer.Stop()
+	}
+}
+
+func (h *Hub) broadcastReconnectAvailable(roomState *roomConnections, memberID string, generation int64, deadline time.Time, speakingChanged bool, changedAt time.Time) []*connection {
+	var slowClients []*connection
+	h.mu.Lock()
+	reconnecting, ok := roomState.reconnecting[memberID]
+	if !ok || reconnecting.generation != generation || reconnecting.phase != reconnectPhaseRestorable || len(roomState.connections) == 0 {
+		h.mu.Unlock()
+		return nil
+	}
+	events := make([]eventEnvelope, 0, 2)
+	if speakingChanged {
+		roomState.seq++
+		events = append(events, eventEnvelope{
+			Type:   "member.speaking_changed",
+			Seq:    roomState.seq,
+			SentAt: changedAt,
+			Payload: speakingChangedMessagePayload{
+				MemberID:  memberID,
+				Speaking:  false,
+				ChangedAt: changedAt,
+			},
+		})
+	}
+	roomState.seq++
+	events = append(events, eventEnvelope{
+		Type:   "member.reconnecting",
+		Seq:    roomState.seq,
+		SentAt: changedAt,
+		Payload: reconnectingMessagePayload{
+			MemberID:          memberID,
+			ReconnectUntil:    deadline,
+			ReconnectWindowMS: durationMillis(h.reconnectWindow),
+		},
+	})
+	for candidate := range roomState.connections {
+		if !candidate.enqueueLocked(newOutboundGroup(events...)) {
+			slowClients = append(slowClients, candidate)
+		}
+	}
+	h.mu.Unlock()
+	return slowClients
+}
+
+func (h *Hub) broadcastReconnectDisconnected(roomState *roomConnections, memberID string, disconnectedAt time.Time) []*connection {
+	var slowClients []*connection
+	h.mu.Lock()
+	if len(roomState.connections) == 0 {
+		h.mu.Unlock()
+		return nil
+	}
+	roomState.seq++
+	event := eventEnvelope{
+		Type:   "member.disconnected",
+		Seq:    roomState.seq,
+		SentAt: disconnectedAt,
+		Payload: disconnectedMessagePayload{
+			MemberID:       memberID,
+			DisconnectedAt: disconnectedAt,
+			Reason:         "reconnect_timeout",
+		},
+	}
+	for candidate := range roomState.connections {
+		if !candidate.enqueueLocked(newOutboundGroup(event)) {
+			slowClients = append(slowClients, candidate)
+		}
+	}
+	h.mu.Unlock()
+	return slowClients
+}
+
+func reconnectRetryDelayUntil(deadline time.Time, now time.Time) time.Duration {
+	remaining := deadline.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	if remaining < reconnectRetryDelay {
+		return remaining
+	}
+	return reconnectRetryDelay
 }
 
 func isStableDisconnectError(err error) bool {
@@ -1153,12 +1472,16 @@ func projectRoom(roomValue domain.Room) roomProjection {
 	}
 }
 
+func (m reconnectingMember) projectsAsReconnecting() bool {
+	return m.phase == reconnectPhaseRestorable || m.phase == reconnectPhaseTimingOut && m.speakingCleared
+}
+
 func projectMembers(members []domain.Member, selfMemberID string, reconnecting map[string]reconnectingMember, ignoreReconnectMemberID string) []memberProjection {
 	projections := make([]memberProjection, 0, len(members))
 	for _, member := range members {
 		var reconnectUntil *time.Time
 		if reconnecting != nil && member.ID != ignoreReconnectMemberID {
-			if reconnectingMember, ok := reconnecting[member.ID]; ok {
+			if reconnectingMember, ok := reconnecting[member.ID]; ok && reconnectingMember.projectsAsReconnecting() {
 				deadline := reconnectingMember.deadline
 				reconnectUntil = &deadline
 				member.State = domain.MemberStateReconnecting

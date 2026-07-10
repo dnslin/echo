@@ -125,7 +125,7 @@ func TestFreshLiveKitTokenRejectsInactiveOrMissingProductMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sign missing member token: %v", err)
 	}
-	_, _, err = repository.LeaveRoomMember(context.Background(), created.Room.ID, created.Member.ID, []domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting}, credentialNow.Add(time.Minute), 30*time.Minute)
+	_, err = repository.LeaveRoomMember(context.Background(), created.Room.ID, created.Member.ID, []domain.MemberState{domain.MemberStateOnline, domain.MemberStateReconnecting}, credentialNow.Add(time.Minute), 30*time.Minute)
 	if err != nil {
 		t.Fatalf("LeaveRoomMember returned error: %v", err)
 	}
