@@ -172,6 +172,42 @@ func (r *Repository) CreateMember(ctx context.Context, member domain.Member) err
 	return r.db.WithContext(ctx).Create(memberToModel(member)).Error
 }
 
+func (r *Repository) UpdateMemberMute(ctx context.Context, roomID string, memberID string, muted bool) error {
+	if r == nil || r.db == nil {
+		return errors.New("store repository requires a database")
+	}
+	updates := map[string]any{"muted": muted}
+	if muted {
+		updates["speaking"] = false
+	}
+	result := r.db.WithContext(ctx).Model(&MemberModel{}).Where("room_id = ? AND id = ?", roomID, memberID).Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return domain.ErrMemberNotFound
+	}
+	return nil
+}
+
+func (r *Repository) UpdateMemberSpeaking(ctx context.Context, roomID string, memberID string, speaking bool) error {
+	if r == nil || r.db == nil {
+		return errors.New("store repository requires a database")
+	}
+	result := r.db.WithContext(ctx).Model(&MemberModel{}).Where("room_id = ? AND id = ?", roomID, memberID).Update("speaking", speaking)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return domain.ErrMemberNotFound
+	}
+	return nil
+}
+
+func (r *Repository) DisconnectMember(ctx context.Context, roomID string, memberID string, activeStates []domain.MemberState, disconnectedAt time.Time, retention time.Duration) (domain.Room, domain.Member, error) {
+	return r.LeaveRoomMember(ctx, roomID, memberID, activeStates, disconnectedAt, retention)
+}
+
 func (r *Repository) JoinRoomWithMember(ctx context.Context, room domain.Room, member domain.Member, activeStates []domain.MemberState, maxActiveMembers int, joinedAt time.Time) (domain.Room, error) {
 	if r == nil || r.db == nil {
 		return domain.Room{}, errors.New("store repository requires a database")

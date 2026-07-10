@@ -4,7 +4,7 @@
 
 ---
 
-## Scenario: Room snapshot, member broadcasts, and heartbeat
+## Scenario: Room snapshot, member broadcasts, reconnect, and heartbeat
 
 ### 1. Scope / Trigger
 
@@ -32,6 +32,7 @@ Hub constructor and HTTP entrypoint:
 type Config struct {
     Authorizer          Authorizer
     SnapshotStore       SnapshotStore
+    StateMutator        StateMutator
     RoomSessionSecret   string
     Now                 func() time.Time
     HeartbeatInterval   time.Duration
@@ -41,6 +42,7 @@ type Config struct {
     ConnectionQueueSize int
     OriginPatterns      []string
     ResyncMinInterval   time.Duration
+    SpeakingMinInterval time.Duration
 }
 
 func NewHub(config Config) *Hub
@@ -57,6 +59,12 @@ type Authorizer interface {
 type SnapshotStore interface {
     FindRoomByID(ctx context.Context, roomID string) (domain.Room, error)
     ListRoomMembersByStates(ctx context.Context, roomID string, states []domain.MemberState) ([]domain.Member, error)
+}
+
+type StateMutator interface {
+    UpdateMemberMuteContext(ctx context.Context, input room.UpdateMemberMuteInput) (room.UpdateMemberMuteResult, error)
+    UpdateMemberSpeakingContext(ctx context.Context, input room.UpdateMemberSpeakingInput) (room.UpdateMemberSpeakingResult, error)
+    DisconnectMemberContext(ctx context.Context, input room.DisconnectMemberInput) (room.LeaveResult, error)
 }
 ```
 
@@ -105,7 +113,13 @@ func (r *Repository) ListRoomMembersByStates(ctx context.Context, roomID string,
 - Room-wide shared `seq` advances only for shared room broadcasts. Client-private snapshots, heartbeat pings, and room errors reuse the latest shared sequence visible to that receiver and must not create false sequence gaps for other clients.
 - Successful HTTP join sends `member.joined` to already-connected clients in the same room. The joining member sees itself through its later snapshot.
 - Successful HTTP leave sends `member.left` to connected clients in the same room and closes the leaving member's connection normally after the event when present.
-- Heartbeat is application-level JSON: server sends `heartbeat.ping`, client sends `heartbeat.pong` with the same `ping_id`. Timeout removes/closes the transport only and must not write reconnect/disconnected product state.
+- Established-connection commands in this scope are `heartbeat.pong`, `room.resync_requested`, `member.mute_changed`, and `member.speaking_changed`. Member identity for those commands must derive from the verified connection room/member claims only, never from payload fields.
+- Accepted `member.mute_changed` persists the authoritative `muted` state for the current member, clears `speaking` when muting, broadcasts `member.muted_changed`, and makes later snapshots reflect the new mute state.
+- Accepted `member.speaking_changed` treats speaking as a client-reported UI signal only. The server must not do audio detection, must dedupe/throttle repeated transitions deterministically, must not reorder members, and must make later snapshots reflect the last accepted speaking state.
+- Unexpected transport loss for a connected member (for example peer close, heartbeat timeout, or slow-consumer close) starts a reconnect window instead of immediately freeing capacity. During that window the room projection keeps the original `member_id` and list position, reports `state = reconnecting`, clears `speaking`, and includes `reconnect_until`.
+- Successful reconnect within the window keeps the original `member_id` and list position, sends `room.snapshot` as the restored connection's first client-visible message, then broadcasts `member.restored`.
+- Reconnect timeout broadcasts `member.disconnected`, durably transitions the member to `disconnected`, removes the member from later snapshots, frees capacity, and starts the existing empty-room retention logic when the room becomes empty.
+- Heartbeat is application-level JSON: server sends `heartbeat.ping`, client sends `heartbeat.pong` with the same `ping_id`. Timeout closes the transport, enters the reconnect flow, and must not durably disconnect the member until the reconnect window expires.
 - Repeated `room.resync_requested` messages from one connection must be bounded with a deterministic guard such as rate limiting or coalescing; normal single resync still returns a snapshot.
 - Unsupported or invalid established-connection messages must not mutate room state; return `room.error` when recoverable or close safely.
 
@@ -125,7 +139,7 @@ func (r *Repository) ListRoomMembersByStates(ctx context.Context, roomID string,
 | Snapshot cannot be built after upgrade | Send `room.error` if possible, then close with internal error. |
 | Client sends invalid JSON or blank message type | Send recoverable `room.error` with `invalid_message`; do not mutate product state. |
 | Client sends unknown/out-of-scope message type | Send recoverable `room.error` with `unknown_message_type`; do not mutate product state. |
-| Missing matching `heartbeat.pong` before timeout | Close/remove connection; do not change persisted member state. |
+| Missing matching `heartbeat.pong` before timeout | Close/remove the transport, enter reconnecting, clear speaking when needed, and only durably disconnect if the reconnect window later expires. |
 | Burst `room.resync_requested` from one connection | Bound snapshot work and return retryable `room.error` with `rate_limited` or equivalent deterministic guard. |
 | Send queue is full for a slow client | Close/remove connection safely so one client cannot block room fan-out. |
 
@@ -134,15 +148,17 @@ func (r *Repository) ListRoomMembersByStates(ctx context.Context, roomID string,
 - Good: WebSocket handshake verifies the query token, checks path-room match, authorizes persisted product room/member state, upgrades, queues the initial snapshot, atomically registers the connection at that snapshot position, then starts read/write/heartbeat loops.
 - Good: `POST /v1/rooms/join` remains the only product join mutation path; after success, the handler notifies the hub to broadcast `member.joined`.
 - Good: `POST /v1/rooms/{room_id}/leave` remains the only product leave mutation path; after bearer-token authorization proves the caller is leaving itself, success notifies the hub to broadcast `member.left` and close the leaving connection.
-- Base: snapshots are projections rebuilt from SQLite room/member state plus the receiving member ID; they are not persisted as separate state and do not advance room-wide shared sequence by themselves.
-- Base: room sequence counters, WebSocket connections, heartbeat pings, resync guards, and send queues are in-memory single-instance transport state; empty room connection state should be pruned.
+- Good: accepted `member.mute_changed` and `member.speaking_changed` commands mutate only the connected member's product state and broadcast authoritative room-state events without trusting client-sent identity.
+- Good: an unexpected transport drop clears speaking, preserves room slot and list position through an in-memory reconnect window, restores the same member on time, and durably disconnects only on timeout.
+- Base: snapshots are projections rebuilt from SQLite room/member state plus in-memory reconnect overlays and the receiving member ID; they are not persisted as separate state and do not advance room-wide shared sequence by themselves.
+- Base: room sequence counters, WebSocket connections, heartbeat pings, reconnect deadlines, speaking throttle guards, resync guards, and send queues are in-memory single-instance transport state; empty room connection state should be pruned.
 - Bad: accepting any `member_id` from a WebSocket client payload as authorization.
 - Bad: deriving room membership from LiveKit participants.
 - Bad: registering a connection for room broadcasts before its initial snapshot has been queued, or building a snapshot and only registering later so concurrent broadcasts are missed.
 - Bad: logging raw WebSocket URLs that contain `?token=...` through either `URL.RawQuery` or `RequestURI`.
 - Bad: letting one member close another member's WebSocket through unauthenticated HTTP leave.
 - Bad: allowing unlimited resync commands to force unbounded snapshot reads/serialization.
-- Bad: implementing mute, speaking, reconnect product-state transitions, chat, or cross-instance fan-out inside the snapshot/broadcast task.
+- Bad: freeing room capacity immediately on transient transport loss, reordering members on speaking changes, or broadening this task into `voice_mode_changed`, chat, or cross-instance fan-out.
 
 ### 6. Tests Required
 
@@ -155,9 +171,13 @@ func (r *Repository) ListRoomMembersByStates(ctx context.Context, roomID string,
   - missing room, expired room, missing member, and disconnected member are rejected before upgrade;
   - snapshot members are ordered by original join time with stable ID tie-breaker, exclude disconnected members, and set exactly one `is_self`;
   - at least two already-connected clients receive `member.joined` after a later HTTP join;
+  - accepted `member.mute_changed` broadcasts `member.muted_changed` and later snapshots reflect the persisted mute state;
+  - accepted `member.speaking_changed` broadcasts `member.speaking_changed`, respects dedupe/throttle behavior, and does not reorder members in later snapshots;
   - HTTP leave broadcasts `member.left`, closes/removes the leaving connection when present, and later snapshots exclude the member;
   - heartbeat ping/pong keeps the connection usable;
-  - heartbeat timeout closes/removes the connection without product-state mutation;
+  - unexpected disconnect enters reconnecting, clears speaking when needed, preserves capacity, and later snapshots project `reconnecting` with `reconnect_until`;
+  - reconnect within the window restores the same member identity and list position, with `room.snapshot` first on the restored connection and `member.restored` broadcast after registration;
+  - reconnect timeout broadcasts `member.disconnected`, durably removes the member from the active list, and frees capacity for later join attempts;
   - burst `room.resync_requested` messages are bounded while a normal single resync succeeds;
   - empty per-room hub state is pruned after the last connection closes and HTTP notifications without clients do not retain rooms;
   - unknown and invalid client messages return `room.error` or safe close without mutation.

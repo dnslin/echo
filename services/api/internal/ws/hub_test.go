@@ -107,6 +107,7 @@ func TestConnectionReceivesRoomEventAfterSnapshotBuildStarts(t *testing.T) {
 	hub := NewHub(Config{
 		Authorizer:        fixedAuthorizer{result: room.AuthorizeMemberResult{Room: roomValue, Member: selfMember}},
 		SnapshotStore:     snapshotStore,
+		StateMutator:      fixedStateMutator{},
 		RoomSessionSecret: wsTestSessionSecret,
 		Now:               func() time.Time { return wsTestNow },
 		WriteTimeout:      time.Second,
@@ -302,7 +303,7 @@ func TestPrivateSnapshotAndErrorDoNotAdvanceSharedBroadcastSequenceForOtherClien
 
 	writeClientCommand(t, bobConn, map[string]any{"type": "room.resync_requested", "request_id": "resync-private", "payload": map[string]any{"reason": "test"}})
 	assertEventType(t, readEvent(t, bobConn), "room.snapshot")
-	writeClientCommand(t, bobConn, map[string]any{"type": "member.speaking_changed", "request_id": "error-private", "payload": map[string]any{"speaking": true}})
+	writeClientCommand(t, bobConn, map[string]any{"type": "member.voice_mode_changed", "request_id": "error-private", "payload": map[string]any{"voice_mode": "free_talk"}})
 	assertEventType(t, readEvent(t, bobConn), "room.error")
 
 	carol := joinRoomThroughHTTP(t, integration.router, created.Room.InviteCode, "Carol", "avatar_09")
@@ -384,7 +385,9 @@ func TestHTTPLeaveRequiresMatchingRoomSessionBeforeBroadcastOrClose(t *testing.T
 }
 
 func TestHubPrunesEmptyRoomStateAndNotificationsWithoutClientsDoNotCreateRooms(t *testing.T) {
-	integration := newWSIntegration(t)
+	integration := newWSIntegration(t, func(config *Config) {
+		config.ReconnectWindow = 50 * time.Millisecond
+	})
 	integration.hub.NotifyMemberJoined(context.Background(), domain.Room{ID: "room_without_clients"}, domain.Member{ID: "mem_without_clients"})
 	if hubHasRoomState(integration.hub, "room_without_clients") {
 		t.Fatalf("hub retained room state for HTTP-only notification without connected clients")
@@ -397,6 +400,7 @@ func TestHubPrunesEmptyRoomStateAndNotificationsWithoutClientsDoNotCreateRooms(t
 		t.Fatalf("hub did not retain room state for connected room")
 	}
 	conn.Close(websocket.StatusNormalClosure, "test done")
+	waitForHubRoomState(t, integration.hub, created.Room.ID, true)
 	waitForHubRoomState(t, integration.hub, created.Room.ID, false)
 }
 
@@ -498,7 +502,7 @@ func TestUnknownAndInvalidMessagesReturnRoomErrorWithoutMutation(t *testing.T) {
 	defer conn.Close(websocket.StatusNormalClosure, "test done")
 	assertEventType(t, readEvent(t, conn), "room.snapshot")
 
-	writeClientCommand(t, conn, map[string]any{"type": "member.speaking_changed", "request_id": "req-unknown", "payload": map[string]any{"speaking": true}})
+	writeClientCommand(t, conn, map[string]any{"type": "member.voice_mode_changed", "request_id": "req-unknown", "payload": map[string]any{"voice_mode": "free_talk"}})
 	unknown := readEvent(t, conn)
 	assertEventType(t, unknown, "room.error")
 	var unknownPayload roomErrorPayload
@@ -548,6 +552,7 @@ func newWSIntegration(t *testing.T, options ...func(*Config)) *wsIntegration {
 	config := Config{
 		Authorizer:          roomService,
 		SnapshotStore:       repository,
+		StateMutator:        roomService,
 		RoomSessionSecret:   wsTestSessionSecret,
 		Now:                 func() time.Time { return wsTestNow },
 		ReconnectWindow:     30 * time.Second,
@@ -838,6 +843,20 @@ func (f fixedAuthorizer) AuthorizeMemberContext(context.Context, room.AuthorizeM
 		return room.AuthorizeMemberResult{}, f.err
 	}
 	return f.result, nil
+}
+
+type fixedStateMutator struct{}
+
+func (fixedStateMutator) UpdateMemberMuteContext(context.Context, room.UpdateMemberMuteInput) (room.UpdateMemberMuteResult, error) {
+	return room.UpdateMemberMuteResult{}, nil
+}
+
+func (fixedStateMutator) UpdateMemberSpeakingContext(context.Context, room.UpdateMemberSpeakingInput) (room.UpdateMemberSpeakingResult, error) {
+	return room.UpdateMemberSpeakingResult{}, nil
+}
+
+func (fixedStateMutator) DisconnectMemberContext(context.Context, room.DisconnectMemberInput) (room.LeaveResult, error) {
+	return room.LeaveResult{}, nil
 }
 
 type blockingSnapshotStore struct {
