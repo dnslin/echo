@@ -522,3 +522,37 @@ Defined the room WebSocket contract for connection authentication, message envel
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Issue 16 websocket state broadcast
+
+**Date**: 2026-07-10
+**Task**: Issue 16 websocket state broadcast
+**Branch**: `issue-16-websocket-state-broadcast`
+
+### Summary
+
+Implemented Issue 16 backend WebSocket mute, speaking, and reconnect state broadcast, added planning artifacts, and updated backend websocket room-state spec.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `081578b` | (see git log) |
+| `1b4edc1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
