@@ -1,0 +1,19 @@
+{
+  "schema": "trellis.review-evidence",
+  "version": 1,
+  "status": "passed",
+  "reviewed_at": "2026-07-13T11:51:37+08:00",
+  "axes": {
+    "standards": "passed",
+    "spec": "passed"
+  },
+  "findings": [
+    {
+      "severity": "warning",
+      "status": "fixed",
+      "path": "apps/desktop/internal/config/store_test.go",
+      "summary": "Added direct coverage that Store.Load returns a real filesystem read error rather than treating it as missing or corrupt configuration."
+    }
+  ],
+  "remaining_risk": "The first full Vitest invocation had an unexpected fork-worker exit after its tests passed; the exact command passed on the required isolated retry."
+}
