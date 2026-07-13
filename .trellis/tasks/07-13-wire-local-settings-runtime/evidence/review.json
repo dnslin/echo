@@ -1,0 +1,12 @@
+{
+  "schema": "trellis.review-evidence",
+  "version": 1,
+  "status": "passed",
+  "reviewed_at": "2026-07-13T05:37:46.130598Z",
+  "axes": {
+    "standards": "passed",
+    "spec": "passed"
+  },
+  "reviewer": "SettingsRuntimeWhitespaceCheck",
+  "summary": "Independent source acceptance review found no remaining findings after verifying Store to SettingsService to generated binding to React, nickname Unicode parity, error paths, free-talk safety, scope exclusions, and Windows build task scoping."
+}

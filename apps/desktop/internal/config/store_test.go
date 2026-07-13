@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +82,72 @@ func TestLoadRestoresAllSavedSettings(t *testing.T) {
 	}
 }
 
+func TestSaveNormalizesAndRejectsInvalidNicknames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	store := NewStore(path)
+	settings := Settings{
+		AnonymousID:      "local-anonymous-id",
+		Nickname:         "  小王  ",
+		AvatarID:         "random-avatar-id",
+		PushToTalkKey:    "B",
+		MicrophoneDevice: "microphone-id",
+		OutputDevice:     "output-id",
+		VoiceMode:        VoiceModeFreeTalk,
+		OutputVolume:     37,
+	}
+	if err := store.Save(settings); err != nil {
+		t.Fatalf("Save() initial settings error = %v", err)
+	}
+	initial, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() initial settings error = %v", err)
+	}
+	if initial.Nickname != "小王" {
+		t.Fatalf("Load() nickname = %q, want normalized nickname", initial.Nickname)
+	}
+
+	for _, test := range []struct {
+		name     string
+		nickname string
+	}{
+		{name: "empty", nickname: ""},
+		{name: "whitespace", nickname: "   "},
+		{name: "17 ASCII code points", nickname: strings.Repeat("a", MaximumNicknameLength+1)},
+		{name: "17 emoji code points", nickname: strings.Repeat("😀", MaximumNicknameLength+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := initial
+			candidate.Nickname = test.nickname
+			err := store.Save(candidate)
+			if !errors.Is(err, ErrInvalidNickname) {
+				t.Fatalf("Save() error = %v, want ErrInvalidNickname for %q", err, test.nickname)
+			}
+
+			reloaded, err := store.Load()
+			if err != nil {
+				t.Fatalf("Load() after rejected save error = %v", err)
+			}
+			if reloaded != initial {
+				t.Fatalf("Load() after rejected save = %#v, want original settings %#v", reloaded, initial)
+			}
+		})
+	}
+
+	unicodeNickname := strings.Repeat("😀", MaximumNicknameLength)
+	candidate := initial
+	candidate.Nickname = unicodeNickname
+	if err := store.Save(candidate); err != nil {
+		t.Fatalf("Save() 16 emoji code points error = %v", err)
+	}
+	reloaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() after 16 emoji code points error = %v", err)
+	}
+	if reloaded != candidate {
+		t.Fatalf("Load() after 16 emoji code points = %#v, want %#v", reloaded, candidate)
+	}
+}
+
 func TestResetAvatarChangesOnlyAvatarAndPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	original := Settings{
@@ -120,6 +188,36 @@ func TestResetAvatarChangesOnlyAvatarAndPersists(t *testing.T) {
 	}
 	if reloaded != reset {
 		t.Fatalf("Load() = %#v, want %#v", reloaded, reset)
+	}
+}
+
+func TestResetAvatarPreservesFirstRunSettings(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "settings.json"))
+	initial, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if initial.Nickname != "" {
+		t.Fatalf("Load() nickname = %q, want empty first-run nickname", initial.Nickname)
+	}
+
+	reset, err := store.ResetAvatar()
+	if err != nil {
+		t.Fatalf("ResetAvatar() error = %v", err)
+	}
+	if reset.Nickname != "" {
+		t.Fatalf("ResetAvatar() nickname = %q, want empty first-run nickname", reset.Nickname)
+	}
+	if reset.AnonymousID != initial.AnonymousID || reset.AvatarID == initial.AvatarID {
+		t.Fatalf("ResetAvatar() = %#v, want same identity and a new avatar", reset)
+	}
+
+	reloaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() after ResetAvatar() error = %v", err)
+	}
+	if reloaded != reset {
+		t.Fatalf("Load() after ResetAvatar() = %#v, want %#v", reloaded, reset)
 	}
 }
 
@@ -221,9 +319,12 @@ func TestSaveReturnsWriteErrors(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err := NewStore(filepath.Join(blocker, "settings.json")).Save(Settings{})
+	err := NewStore(filepath.Join(blocker, "settings.json")).Save(Settings{Nickname: "echo"})
 	if err == nil {
 		t.Fatal("Save() error = nil, want an I/O error")
+	}
+	if errors.Is(err, ErrInvalidNickname) {
+		t.Fatalf("Save() error = %v, want an I/O error", err)
 	}
 }
 

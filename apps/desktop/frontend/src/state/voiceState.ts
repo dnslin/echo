@@ -1,12 +1,8 @@
-import type { VoiceMode } from '../settings/settings'
-
-export type { VoiceMode } from '../settings/settings'
-
 export type VoiceStateInput = {
   connected: boolean
   micAvailable: boolean
   muted: boolean
-  voiceMode: VoiceMode
+  voiceMode: string
   pttPressed: boolean
   freeTalkEnabledInRoom: boolean
 }
@@ -16,9 +12,9 @@ export function canSendAudio(input: VoiceStateInput): boolean {
     return false
   }
 
-  if (input.voiceMode === 'push_to_talk') {
-    return input.pttPressed
+  if (input.voiceMode === 'free_talk') {
+    return input.freeTalkEnabledInRoom
   }
 
-  return input.freeTalkEnabledInRoom
+  return input.pttPressed
 }

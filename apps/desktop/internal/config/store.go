@@ -9,16 +9,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
-	DefaultPushToTalkKey = "V"
-	VoiceModePushToTalk  = "push_to_talk"
-	VoiceModeFreeTalk    = "free_talk"
-	MinimumOutputVolume  = 0
-	MaximumOutputVolume  = 100
-	DefaultOutputVolume  = MaximumOutputVolume
+	DefaultPushToTalkKey  = "V"
+	VoiceModePushToTalk   = "push_to_talk"
+	VoiceModeFreeTalk     = "free_talk"
+	MinimumOutputVolume   = 0
+	MaximumOutputVolume   = 100
+	DefaultOutputVolume   = MaximumOutputVolume
+	MaximumNicknameLength = 16
 )
+
+var ErrInvalidNickname = errors.New("nickname must be 1 to 16 characters")
 
 // Settings is the complete local preference contract persisted by the desktop shell.
 type Settings struct {
@@ -76,8 +80,14 @@ func (s *Store) Load() (Settings, error) {
 	return settings, nil
 }
 
-// Save normalizes settings before replacing the persisted settings file.
+// Save validates and normalizes settings before replacing the persisted settings file.
 func (s *Store) Save(settings Settings) error {
+	nickname, err := validateNickname(settings.Nickname)
+	if err != nil {
+		return err
+	}
+	settings.Nickname = nickname
+
 	normalized, _, err := normalize(settings)
 	if err != nil {
 		return err
@@ -98,7 +108,7 @@ func (s *Store) ResetAvatar() (Settings, error) {
 		return Settings{}, fmt.Errorf("generate avatar ID: %w", err)
 	}
 	settings.AvatarID = avatarID
-	if err := s.Save(settings); err != nil {
+	if err := s.write(settings); err != nil {
 		return Settings{}, err
 	}
 
@@ -177,8 +187,25 @@ func newDefaultSettings() (Settings, error) {
 	}, nil
 }
 
+func validateNickname(nickname string) (string, error) {
+	nickname = strings.TrimSpace(nickname)
+	if nickname == "" || utf8.RuneCountInString(nickname) > MaximumNicknameLength {
+		return "", ErrInvalidNickname
+	}
+
+	return nickname, nil
+}
+
 func normalize(settings Settings) (Settings, bool, error) {
 	changed := false
+	nickname := strings.TrimSpace(settings.Nickname)
+	if utf8.RuneCountInString(nickname) > MaximumNicknameLength {
+		nickname = ""
+	}
+	if settings.Nickname != nickname {
+		settings.Nickname = nickname
+		changed = true
+	}
 
 	if strings.TrimSpace(settings.AnonymousID) == "" {
 		anonymousID, err := randomID()

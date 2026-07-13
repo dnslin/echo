@@ -5,6 +5,9 @@ import (
 	"log"
 	"sync/atomic"
 
+	"echo/apps/desktop/internal/app"
+	"echo/apps/desktop/internal/config"
+
 	"echo/apps/desktop/internal/keyboard"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -12,9 +15,20 @@ import (
 )
 
 func main() {
+	settingsStore, err := config.NewDefaultStore()
+	if err != nil {
+		log.Fatalf("create settings store: %v", err)
+	}
+	if _, err := settingsStore.Load(); err != nil {
+		log.Fatalf("load local settings: %v", err)
+	}
+	settingsService := app.NewSettingsService(settingsStore)
 	app := application.New(application.Options{
 		Name:        "echo",
 		Description: "echo 桌面端骨架",
+		Services: []application.Service{
+			application.NewService(settingsService),
+		},
 		Assets: application.AssetOptions{
 			Handler: assetHandler(),
 		},
