@@ -1,0 +1,8 @@
+{
+  "schema": "trellis.commit-readiness",
+  "version": 1,
+  "status": "ready",
+  "checked_at": "2026-07-13T08:07:54.419Z",
+  "revision": "82a2c54d0878d9717306e26fda63a27f8d8204c6",
+  "working_tree": "clean"
+}
