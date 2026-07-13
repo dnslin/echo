@@ -625,3 +625,37 @@ Implemented local anonymous identity and JSON settings persistence with corrupti
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 接入本地设置运行时
+
+**Date**: 2026-07-13
+**Task**: 接入本地设置运行时
+**Package**: cli
+**Branch**: `feat/issue-17-local-identity-settings`
+
+### Summary
+
+将 config.Store 接入 Wails SettingsService 与生成 binding，完成 React 本地设置运行时、Unicode 昵称校验、语音安全门控和 Windows build 稳定性验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `da8353b5fc30508ac942233563bc263245e5eb9f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
