@@ -9,10 +9,22 @@ const settingsBinding = vi.hoisted(() => ({
   resetAvatar: vi.fn(),
 }))
 
+const deviceBinding = vi.hoisted(() => ({
+  enumerate: vi.fn(),
+  requestPermission: vi.fn(),
+  supportsOutputSelection: vi.fn(),
+}))
+
 vi.mock('../bindings/echo/apps/desktop/internal/app/settingsservice', () => ({
   Load: settingsBinding.load,
   Save: settingsBinding.save,
   ResetAvatar: settingsBinding.resetAvatar,
+}))
+
+vi.mock('./media/devices', () => ({
+  enumerateAudioDevices: deviceBinding.enumerate,
+  requestAudioDevicePermission: deviceBinding.requestPermission,
+  supportsAudioOutputSelection: deviceBinding.supportsOutputSelection,
 }))
 
 vi.mock('@wailsio/runtime', () => ({
@@ -40,6 +52,29 @@ describe('App local settings entry', () => {
     settingsBinding.load.mockResolvedValue(firstLaunchSettings)
     settingsBinding.save.mockResolvedValue({ ...firstLaunchSettings, nickname: '小王' })
     settingsBinding.resetAvatar.mockResolvedValue({ ...firstLaunchSettings, avatar_id: 'avatar-2' })
+    deviceBinding.enumerate.mockResolvedValue({
+      status: 'ready',
+      inputs: [
+        { deviceId: 'mic-1', label: 'Microphone One' },
+        { deviceId: 'mic-2', label: 'Microphone Two' },
+      ],
+      outputs: [
+        { deviceId: 'speaker-1', label: 'Speaker One' },
+        { deviceId: 'speaker-2', label: 'Speaker Two' },
+      ],
+    })
+    deviceBinding.requestPermission.mockResolvedValue({
+      status: 'ready',
+      inputs: [
+        { deviceId: 'mic-1', label: 'Microphone One' },
+        { deviceId: 'mic-2', label: 'Microphone Two' },
+      ],
+      outputs: [
+        { deviceId: 'speaker-1', label: 'Speaker One' },
+        { deviceId: 'speaker-2', label: 'Speaker Two' },
+      ],
+    })
+    deviceBinding.supportsOutputSelection.mockReturnValue(true)
   })
 
   afterEach(() => {
@@ -47,13 +82,16 @@ describe('App local settings entry', () => {
     settingsBinding.load.mockReset()
     settingsBinding.save.mockReset()
     settingsBinding.resetAvatar.mockReset()
+    deviceBinding.enumerate.mockReset()
+    deviceBinding.requestPermission.mockReset()
+    deviceBinding.supportsOutputSelection.mockReset()
   })
 
   it('shows and saves the first nickname page', async () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { name: '欢迎使用 echo' })).toBeVisible()
-    expect(screen.getByText('头像：avatar-1')).toBeVisible()
+    expect(screen.getByText('avatar-1', { selector: 'code' })).toBeVisible()
     const nickname = screen.getByLabelText('昵称')
     const continueButton = screen.getByRole('button', { name: '继续' })
     expect(continueButton).toBeDisabled()
@@ -75,6 +113,14 @@ describe('App local settings entry', () => {
       expect(settingsBinding.save).toHaveBeenCalledWith({ ...firstLaunchSettings, nickname: '小王' })
     })
     expect(await screen.findByText('你好，小王')).toBeVisible()
+  })
+
+  it('renders the first nickname page in the desktop settings shell', async () => {
+    render(<App />)
+
+    expect(screen.getByRole('main')).toHaveClass('settings-app')
+    expect(await screen.findByRole('region', { name: '欢迎使用 echo' })).toHaveClass('settings-card')
+    expect(screen.getByRole('button', { name: '继续' })).toHaveClass('settings-button--primary')
   })
 
   it('matches Store Unicode whitespace when enabling save', async () => {
@@ -168,6 +214,7 @@ describe('App local settings entry', () => {
     render(<App />)
 
     await screen.findByText('你好，小李')
+    await screen.findByRole('option', { name: 'Microphone Two' })
     fireEvent.change(screen.getByLabelText('快捷键'), { target: { value: 'B' } })
     fireEvent.change(screen.getByLabelText('麦克风设备'), { target: { value: 'mic-2' } })
     fireEvent.change(screen.getByLabelText('输出设备'), { target: { value: 'speaker-2' } })
@@ -183,6 +230,82 @@ describe('App local settings entry', () => {
     })
   })
 
+  it('selects enumerated devices and confirms a successful save', async () => {
+    const restoredSettings = { ...firstLaunchSettings, nickname: '小李' }
+    const persistedSettings = {
+      ...restoredSettings,
+      microphone_device: 'mic-1',
+      output_device: 'speaker-1',
+    }
+    settingsBinding.load.mockResolvedValue(restoredSettings)
+    settingsBinding.save.mockResolvedValue(persistedSettings)
+    render(<App />)
+
+    const microphone = await screen.findByRole('combobox', { name: '麦克风设备' })
+    const output = screen.getByRole('combobox', { name: '输出设备' })
+    expect(screen.getByRole('main')).toHaveClass('settings-app--viewport')
+    expect(screen.getByRole('button', { name: '授权并刷新设备' })).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: '授权并刷新设备' }))
+    await waitFor(() => {
+      expect(deviceBinding.requestPermission).toHaveBeenCalledOnce()
+    })
+    fireEvent.change(microphone, { target: { value: 'mic-1' } })
+    fireEvent.change(output, { target: { value: 'speaker-1' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() => {
+      expect(settingsBinding.save).toHaveBeenCalledWith(persistedSettings)
+    })
+    expect(await screen.findByText('本地设置已保存')).toBeVisible()
+  })
+
+  it('falls back to system defaults when saved devices are unavailable', async () => {
+    settingsBinding.load.mockResolvedValue({
+      ...firstLaunchSettings,
+      nickname: '小李',
+      microphone_device: 'missing-microphone',
+      output_device: 'missing-output',
+    })
+    render(<App />)
+
+    expect(await screen.findByText('检测到已保存的设备不可用，已改为跟随系统默认。')).toBeVisible()
+    expect(screen.getByRole('combobox', { name: '麦克风设备' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: '输出设备' })).toHaveValue('')
+  })
+
+  it('clears stale preferences when no audio devices are enumerated', async () => {
+    const savedSettings = {
+      ...firstLaunchSettings,
+      nickname: '小李',
+      microphone_device: 'missing-microphone',
+      output_device: 'missing-output',
+    }
+    deviceBinding.enumerate.mockResolvedValue({ status: 'no-devices', inputs: [], outputs: [] })
+    settingsBinding.load.mockResolvedValue(savedSettings)
+    render(<App />)
+
+    expect(await screen.findByText('检测到已保存的设备不可用，已改为跟随系统默认。')).toBeVisible()
+    expect(screen.getByRole('combobox', { name: '麦克风设备' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: '输出设备' })).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => {
+      expect(settingsBinding.save).toHaveBeenCalledWith({ ...savedSettings, microphone_device: '', output_device: '' })
+    })
+  })
+
+  it('reports microphone discovery failure alongside output fallback', async () => {
+    deviceBinding.enumerate.mockResolvedValue({ status: 'permission-denied', inputs: [], outputs: [] })
+    deviceBinding.supportsOutputSelection.mockReturnValue(false)
+    settingsBinding.load.mockResolvedValue({ ...firstLaunchSettings, nickname: '小李' })
+    render(<App />)
+
+    const deviceStatus = await screen.findByRole('status')
+    expect(deviceStatus).toHaveTextContent('未获得麦克风权限，当前使用系统默认设备。')
+    expect(deviceStatus).toHaveAttribute('aria-live', 'polite')
+    expect(screen.getByRole('status')).toHaveTextContent('输出设备将跟随系统默认。')
+  })
+
   it('shows a local settings save error', async () => {
     settingsBinding.save.mockRejectedValue(new Error('save settings failed'))
     render(<App />)
@@ -192,6 +315,14 @@ describe('App local settings entry', () => {
     fireEvent.click(screen.getByRole('button', { name: '继续' }))
 
     expect(await screen.findByText('无法保存本地设置，请检查配置目录权限。')).toBeVisible()
+    settingsBinding.save.mockResolvedValue({ ...firstLaunchSettings, nickname: '小王' })
+    fireEvent.click(screen.getByRole('button', { name: '再次保存' }))
+
+    await waitFor(() => {
+      expect(settingsBinding.save).toHaveBeenCalledTimes(2)
+      expect(settingsBinding.save).toHaveBeenLastCalledWith({ ...firstLaunchSettings, nickname: '小王' })
+    })
+    expect(await screen.findByText('本地设置已保存')).toBeVisible()
   })
 
   it('shows restored settings and persists a reset avatar', async () => {
@@ -217,14 +348,16 @@ describe('App local settings entry', () => {
     render(<App />)
 
     expect(await screen.findByText('你好，小李')).toBeVisible()
-    expect(screen.getByDisplayValue('mic-1')).toBeVisible()
-    expect(screen.getByDisplayValue('speaker-1')).toBeVisible()
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: '麦克风设备' })).toHaveValue('mic-1')
+      expect(screen.getByRole('combobox', { name: '输出设备' })).toHaveValue('speaker-1')
+    })
     fireEvent.click(screen.getByRole('button', { name: '重新随机头像' }))
 
     await waitFor(() => {
       expect(settingsBinding.resetAvatar).toHaveBeenCalledOnce()
     })
-    expect(await screen.findByText('头像：avatar-new')).toBeVisible()
+    expect(await screen.findByText('avatar-new', { selector: 'code' })).toBeVisible()
   })
 
   it('shows a reset avatar error', async () => {
@@ -236,6 +369,13 @@ describe('App local settings entry', () => {
     fireEvent.click(screen.getByRole('button', { name: '重新随机头像' }))
 
     expect(await screen.findByText('无法重置随机头像，请稍后重试。')).toBeVisible()
+    settingsBinding.resetAvatar.mockResolvedValue({ ...firstLaunchSettings, nickname: '小李', avatar_id: 'avatar-new' })
+    fireEvent.click(screen.getByRole('button', { name: '再次重置头像' }))
+
+    await waitFor(() => {
+      expect(settingsBinding.resetAvatar).toHaveBeenCalledTimes(2)
+    })
+    expect(await screen.findByText('avatar-new', { selector: 'code' })).toBeVisible()
   })
 
   it('shows a local settings load error', async () => {
@@ -244,5 +384,12 @@ describe('App local settings entry', () => {
     render(<App />)
 
     expect(await screen.findByText('无法加载本地设置，请检查配置目录权限。')).toBeVisible()
+    settingsBinding.load.mockResolvedValue({ ...firstLaunchSettings, nickname: '小李' })
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    await waitFor(() => {
+      expect(settingsBinding.load).toHaveBeenCalledTimes(2)
+    })
+    expect(await screen.findByText('你好，小李')).toBeVisible()
   })
 })

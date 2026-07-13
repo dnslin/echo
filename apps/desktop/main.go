@@ -34,13 +34,7 @@ func main() {
 		},
 	})
 
-	mainWindow := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "echo",
-		Width:            1000,
-		Height:           618,
-		BackgroundColour: application.NewRGB(6, 7, 15),
-		URL:              "/",
-	})
+	mainWindow := app.Window.NewWithOptions(mainWindowOptions())
 
 	var allowQuit atomic.Bool
 	mainWindow.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
@@ -89,6 +83,20 @@ func main() {
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func mainWindowOptions() application.WebviewWindowOptions {
+	return application.WebviewWindowOptions{
+		Title:            "echo",
+		Width:            720,
+		Height:           720,
+		MinWidth:         600,
+		MinHeight:        640,
+		MaxWidth:         1000,
+		MaxHeight:        900,
+		BackgroundColour: application.NewRGB(243, 246, 248),
+		URL:              "/",
 	}
 }
 
