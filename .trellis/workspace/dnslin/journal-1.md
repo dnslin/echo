@@ -591,3 +591,37 @@ Fixed durable member transitions, room-scoped WebSocket serialization, reconnect
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Implement Issue 17 local settings
+
+**Date**: 2026-07-13
+**Task**: Implement Issue 17 local settings
+**Package**: cli
+**Branch**: `feat/issue-17-local-identity-settings`
+
+### Summary
+
+Implemented local anonymous identity and JSON settings persistence with corruption recovery, voice-send safety, focused tests, and independent quality evidence.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a2729a7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
