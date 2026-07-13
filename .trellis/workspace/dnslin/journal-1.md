@@ -659,3 +659,37 @@ Implemented local anonymous identity and JSON settings persistence with corrupti
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: 修复设置运行时与设备选择
+
+**Date**: 2026-07-13
+**Task**: 修复设置运行时与设备选择
+**Package**: cli
+**Branch**: `feat/issue-17-local-identity-settings`
+
+### Summary
+
+修复 WebView2 设备枚举、权限状态、失效偏好回退、Save/Load/头像重试、可访问状态区与 Wails 窗口布局；自动与 Windows HITL 验收通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `82a2c54` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

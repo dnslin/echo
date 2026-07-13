@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 19
+- **Total Sessions**: 20
 - **Last Active**: 2026-07-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~661 | Active |
+| `journal-1.md` | ~695 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 20 | 2026-07-13 | 修复设置运行时与设备选择 | `82a2c54` | `feat/issue-17-local-identity-settings` |
 | 19 | 2026-07-13 | 接入本地设置运行时 | `da8353b5fc30508ac942233563bc263245e5eb9f` | `feat/issue-17-local-identity-settings` |
 | 18 | 2026-07-13 | Implement Issue 17 local settings | `a2729a7` | `feat/issue-17-local-identity-settings` |
 | 17 | 2026-07-10 | Harden WebSocket room state transitions | `fcc2df1`, `caca1de`, `d29590b` | `issue-16-websocket-state-broadcast` |
