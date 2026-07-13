@@ -4,11 +4,11 @@
 Add a new session to journal file and update index.md.
 
 Usage:
-    python add_session.py --title "Title" --commit "hash" --summary "Summary" [--package cli]
-    python add_session.py --title "Title" --branch "feat/my-branch"
+    python3 add_session.py --title "Title" --commit "hash" --summary "Summary" [--package cli]
+    python3 add_session.py --title "Title" --branch "feat/my-branch"
 
     # Pipe detailed content via stdin (use --stdin to opt in):
-    cat << 'EOF' | python add_session.py --stdin --title "Title" --summary "Summary"
+    cat << 'EOF' | python3 add_session.py --stdin --title "Title" --summary "Summary"
     <session content here>
     EOF
 
@@ -54,12 +54,6 @@ from common.config import (
     resolve_package,
     validate_package,
 )
-
-
-DEFAULT_MAIN_CHANGES = (
-    "- Detailed change bullets were not supplied; see the summary above."
-)
-DEFAULT_TESTING = "- Validation was not recorded for this session."
 
 
 # =============================================================================
@@ -211,7 +205,6 @@ def generate_session_content(
     today: str,
     package: str | None = None,
     branch: str | None = None,
-    testing_content: str = DEFAULT_TESTING,
 ) -> str:
     """Generate session content."""
     if commit and commit != "-":
@@ -247,7 +240,7 @@ def generate_session_content(
 
 ### Testing
 
-{testing_content}
+- [OK] (Add test results)
 
 ### Status
 
@@ -453,8 +446,8 @@ def _auto_commit_workspace(repo_root: Path) -> None:
 def add_session(
     title: str,
     commit: str = "-",
-    summary: str = "Session summary was not supplied.",
-    extra_content: str = DEFAULT_MAIN_CHANGES,
+    summary: str = "(Add summary)",
+    extra_content: str = "(Add details)",
     auto_commit: bool = True,
     package: str | None = None,
     branch: str | None = None,
@@ -561,7 +554,7 @@ def main() -> int:
     )
     parser.add_argument("--title", required=True, help="Session title")
     parser.add_argument("--commit", default="-", help="Comma-separated commit hashes")
-    parser.add_argument("--summary", default="Session summary was not supplied.", help="Brief summary")
+    parser.add_argument("--summary", default="(Add summary)", help="Brief summary")
     parser.add_argument("--content-file", help="Path to file with detailed content")
     parser.add_argument("--package", help="Package name tag (e.g., cli, docs-site)")
     parser.add_argument("--branch", help="Branch name (auto-detected if omitted)")
@@ -572,7 +565,7 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    extra_content = DEFAULT_MAIN_CHANGES
+    extra_content = "(Add details)"
     if args.content_file:
         content_path = Path(args.content_file)
         if content_path.is_file():

@@ -4,26 +4,31 @@
 Task Management Script.
 
 Usage:
-    python task.py create "<title>" [--slug <name>] [--assignee <dev>] [--priority P0|P1|P2|P3] [--parent <dir>] [--package <pkg>] [--no-start]
-    python task.py add-context <dir> <file> <path> [reason] # Add jsonl entry
-    python task.py validate <dir>              # Validate jsonl files
-    python task.py list-context <dir>          # List jsonl entries
-    python task.py start <dir>                 # Set active task
-    python task.py current [--source]          # Show active task
-    python task.py finish                      # Clear active task
-    python task.py set-branch <dir> <branch>   # Set git branch
-    python task.py set-base-branch <dir> <branch>  # Set PR target branch
-    python task.py set-scope <dir> <scope>     # Set scope for PR title
-    python task.py archive <task-dir>          # Archive completed task
-    python task.py list                        # List active tasks
-    python task.py list-archive [month]        # List archived tasks
-    python task.py add-subtask <parent-dir> <child-dir>     # Link child to parent
-    python task.py remove-subtask <parent-dir> <child-dir>  # Unlink child from parent
+    python3 task.py create "<title>" [--slug <name>] [--assignee <dev>] [--priority P0|P1|P2|P3] [--parent <dir>] [--package <pkg>] [--complex] [--no-start]
+    python3 task.py add-context <dir> <file> <path> [reason] # Add jsonl entry
+    python3 task.py validate <dir>              # Validate jsonl files
+    python3 task.py validate-lifecycle <dir> <activation|completion> [--allow-legacy] [--json]
+    python3 task.py skill-registry validate [--json]
+    python3 task.py skill-registry lookup (--skill <id> | --intent <intent>) [--phase <phase>]
+    python3 task.py list-context <dir>          # List jsonl entries
+    python3 task.py start <dir> [--allow-legacy]  # Gate transition and set active task
+    python3 task.py current [--source]          # Show active task
+    python3 task.py finish                      # Clear active task
+    python3 task.py set-branch <dir> <branch>   # Set git branch
+    python3 task.py set-base-branch <dir> <branch>  # Set PR target branch
+    python3 task.py set-scope <dir> <scope>     # Set scope for PR title
+    python3 task.py archive <task-dir> [--allow-legacy]  # Gate and archive task
+    python3 task.py list                        # List active tasks
+    python3 task.py list-archive [month]        # List archived tasks
+    python3 task.py add-subtask <parent-dir> <child-dir>     # Link child to parent
+    python3 task.py remove-subtask <parent-dir> <child-dir>  # Unlink child from parent
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 import sys
 
 from common.log import Colors, colored
@@ -44,6 +49,14 @@ from common.active_task import (
 )
 from common.io import read_json, write_json
 from common.task_utils import resolve_task_dir, run_task_hooks
+from common.lifecycle_contract import GateResult, validate_lifecycle_gate
+from common.skill_registry import (
+    RegistryError,
+    load_registry,
+    lookup_routes,
+    lookup_skill,
+    registry_path,
+)
 from common.tasks import iter_active_tasks, children_progress
 
 # Import command handlers from split modules (also re-exports for plan.py compatibility)
@@ -63,12 +76,63 @@ from common.task_context import (
 )
 
 
+def _print_gate_result(result: GateResult, as_json: bool = False) -> None:
+    """Print a lifecycle validation result for humans or machine consumers."""
+    if as_json:
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        return
+    label = "passed" if result.ok else "blocked"
+    color = Colors.GREEN if result.ok else Colors.RED
+    print(colored(f"Lifecycle {result.gate} gate: {label}", color))
+    for warning in result.warnings:
+        print(colored(f"WARNING [{warning.code}] {warning.message}", Colors.YELLOW))
+        if warning.hint:
+            print(f"  Hint: {warning.hint}")
+    for blocker in result.blockers:
+        print(colored(f"BLOCKER [{blocker.code}] {blocker.message}", Colors.RED))
+        if blocker.path:
+            print(f"  Path: {blocker.path}")
+        if blocker.hint:
+            print(f"  Hint: {blocker.hint}")
+
+
+def cmd_validate_lifecycle(args: argparse.Namespace) -> int:
+    """Dry-run a lifecycle gate without mutating task or session state."""
+    repo_root = get_repo_root()
+    task_dir = resolve_task_dir(args.dir, repo_root)
+    result = validate_lifecycle_gate(
+        task_dir,
+        repo_root,
+        args.gate,
+        allow_legacy=getattr(args, "allow_legacy", False),
+    )
+    _print_gate_result(result, getattr(args, "json", False))
+    return 0 if result.ok else 1
+
+
+def _validate_transition(
+    task_dir: Path,
+    repo_root: Path,
+    gate: str,
+    allow_legacy: bool,
+) -> GateResult:
+    """Run and print a lifecycle gate before any transition side effect."""
+    result = validate_lifecycle_gate(task_dir, repo_root, gate, allow_legacy)
+    if not result.ok:
+        _print_gate_result(result)
+    elif result.warnings:
+        _print_gate_result(result)
+    return result
+
+
+
+
 # =============================================================================
 # Command: start / finish
 # =============================================================================
 
 def cmd_start(args: argparse.Namespace) -> int:
-    """Set active task."""
+    """Set active task, gating only a real planning-to-in-progress transition."""
     repo_root = get_repo_root()
     task_input = args.dir
 
@@ -76,27 +140,43 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(colored("Error: task directory or name required", Colors.RED))
         return 1
 
-    # Resolve task directory (supports task name, relative path, or absolute path)
     full_path = resolve_task_dir(task_input, repo_root)
-
     if not full_path.is_dir():
         print(colored(f"Error: Task not found: {task_input}", Colors.RED))
         print("Hint: Use task name (e.g., 'my-task') or full path (e.g., '.trellis/tasks/01-31-my-task')")
         return 1
 
-    # Convert to relative path for storage
     try:
-        task_dir = full_path.relative_to(repo_root).as_posix()
+        task_ref = full_path.relative_to(repo_root).as_posix()
     except ValueError:
-        task_dir = str(full_path)
+        task_ref = str(full_path)
 
     task_json_path = full_path / FILE_TASK_JSON
+    task_data = read_json(task_json_path)
+    if not isinstance(task_data, dict):
+        gate_result = _validate_transition(
+            full_path,
+            repo_root,
+            "activation",
+            getattr(args, "allow_legacy", False),
+        )
+        if not gate_result.ok:
+            return 1
+        task_data = {}
 
-    if not resolve_context_key():
-        # Degraded mode: no session identity available.
-        # Hook didn't inject TRELLIS_CONTEXT_ID (common on Windows + Claude Code,
-        # --continue resume path, fork distribution, hooks disabled, etc.). Skip
-        # per-session pointer write; AI continues based on conversation context.
+    transition_required = task_data.get("status") == "planning"
+    if transition_required:
+        gate_result = _validate_transition(
+            full_path,
+            repo_root,
+            "activation",
+            getattr(args, "allow_legacy", False),
+        )
+        if not gate_result.ok:
+            return 1
+
+    context_key = resolve_context_key()
+    if not context_key:
         print(colored(
             "ℹ Session identity not available; active-task pointer not persisted "
             "this session (degraded mode). AI continues based on conversation context.",
@@ -108,36 +188,44 @@ def cmd_start(args: argparse.Namespace) -> int:
             Colors.YELLOW,
         ))
 
-        # Still flip task.json status: planning → in_progress so downstream phases proceed.
-        if task_json_path.is_file():
-            data = read_json(task_json_path)
-            if data and data.get("status") == "planning":
-                data["status"] = "in_progress"
-                if write_json(task_json_path, data):
-                    print(colored("✓ Status: planning → in_progress (degraded)", Colors.GREEN))
-            run_task_hooks("after_start", task_json_path, repo_root)
-        return 0
-
-    active = set_active_task(task_dir, repo_root)
-    if active:
-        print(colored(f"✓ Current task set to: {task_dir}", Colors.GREEN))
-        print(f"Source: {active.source}")
-
-        if task_json_path.is_file():
-            data = read_json(task_json_path)
-            if data and data.get("status") == "planning":
-                data["status"] = "in_progress"
-                if write_json(task_json_path, data):
-                    print(colored("✓ Status: planning → in_progress", Colors.GREEN))
-
-        print()
-        print(colored("The hook will now inject context from this task's jsonl files.", Colors.BLUE))
-
+        if transition_required:
+            transitioned = dict(task_data)
+            transitioned["status"] = "in_progress"
+            if not write_json(task_json_path, transitioned):
+                print(colored("Error: Failed to persist task status; start was not applied", Colors.RED))
+                return 1
+            print(colored("✓ Status: planning → in_progress (degraded)", Colors.GREEN))
         run_task_hooks("after_start", task_json_path, repo_root)
         return 0
-    else:
-        print(colored("Error: Failed to set current task", Colors.RED))
+
+    original_data = dict(task_data)
+    if transition_required:
+        transitioned = dict(task_data)
+        transitioned["status"] = "in_progress"
+        if not write_json(task_json_path, transitioned):
+            print(colored("Error: Failed to persist task status; session pointer was not changed", Colors.RED))
+            return 1
+
+    active = set_active_task(task_ref, repo_root)
+    if not active:
+        if transition_required and not write_json(task_json_path, original_data):
+            print(colored(
+                "Error: Failed to set current task and could not roll task status back to planning",
+                Colors.RED,
+            ))
+        else:
+            print(colored("Error: Failed to set current task", Colors.RED))
         return 1
+
+    print(colored(f"✓ Current task set to: {task_ref}", Colors.GREEN))
+    print(f"Source: {active.source}")
+    if transition_required:
+        print(colored("✓ Status: planning → in_progress", Colors.GREEN))
+
+    print()
+    print(colored("The hook will now inject context from this task's jsonl files.", Colors.BLUE))
+    run_task_hooks("after_start", task_json_path, repo_root)
+    return 0
 
 
 def cmd_finish(args: argparse.Namespace) -> int:
@@ -295,6 +383,40 @@ def cmd_list_archive(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_skill_registry(args: argparse.Namespace) -> int:
+    """Validate or query the canonical skill registry."""
+    repo_root = get_repo_root()
+    try:
+        registry = load_registry(registry_path(repo_root))
+        if args.registry_command == "validate":
+            result = {
+                "schema": registry["schema"],
+                "version": registry["version"],
+                "valid": True,
+                "skill_count": len(registry["skills"]),
+            }
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                print(colored(
+                    f"Skill registry valid: {result['skill_count']} skills",
+                    Colors.GREEN,
+                ))
+            return 0
+        if args.registry_command == "lookup":
+            if args.skill:
+                payload: object = lookup_skill(registry, args.skill)
+            else:
+                payload = lookup_routes(registry, args.intent, args.phase)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+    except RegistryError as exc:
+        print(colored(f"Error: {exc}", Colors.RED), file=sys.stderr)
+        return 1
+    print(colored("Error: skill-registry subcommand required", Colors.RED), file=sys.stderr)
+    return 2
+
+
 # =============================================================================
 # Help
 # =============================================================================
@@ -304,24 +426,29 @@ def show_usage() -> None:
     print("""Task Management Script
 
 Usage:
-  python task.py create <title>                     Create new task directory
-  python task.py create <title> --package <pkg>     Create task for a specific package
-  python task.py create <title> --parent <dir>      Create task as child of parent
-  python task.py create <title> --no-start          Create without making it active in this session
-  python task.py add-context <dir> <jsonl> <path> [reason]  Add entry to jsonl
-  python task.py validate <dir>                     Validate jsonl files
-  python task.py list-context <dir>                 List jsonl entries
-  python task.py start <dir>                        Set active task
-  python task.py current [--source]                 Show active task
-  python task.py finish                             Clear active task
-  python task.py set-branch <dir> <branch>          Set git branch
-  python task.py set-base-branch <dir> <branch>     Set PR target branch
-  python task.py set-scope <dir> <scope>            Set scope for PR title
-  python task.py archive <task-dir>                 Archive completed task
-  python task.py add-subtask <parent> <child>       Link child task to parent
-  python task.py remove-subtask <parent> <child>    Unlink child from parent
-  python task.py list [--mine] [--status <status>]  List tasks
-  python task.py list-archive [YYYY-MM]             List archived tasks
+  python3 task.py create <title>                     Create new task directory
+  python3 task.py create <title> --package <pkg>     Create task for a specific package
+  python3 task.py create <title> --parent <dir>      Create task as child of parent
+  python3 task.py create <title> --no-start          Create without making it active in this session
+  python3 task.py create <title> --complex           Require design and implementation plan
+  python3 task.py add-context <dir> <jsonl> <path> [reason]  Add entry to jsonl
+  python3 task.py validate <dir>                     Validate jsonl files
+  python3 task.py validate-lifecycle <dir> <gate>    Dry-run activation/completion gate
+  python3 task.py skill-registry validate [--json]    Validate skill contracts
+  python3 task.py skill-registry lookup --skill <id> Lookup one skill contract
+  python3 task.py skill-registry lookup --intent <i> [--phase <p>]  List deterministic routes
+  python3 task.py list-context <dir>                 List jsonl entries
+  python3 task.py start <dir> [--allow-legacy]       Validate and set active task
+  python3 task.py current [--source]                 Show active task
+  python3 task.py finish                             Clear active task
+  python3 task.py set-branch <dir> <branch>          Set git branch
+  python3 task.py set-base-branch <dir> <branch>     Set PR target branch
+  python3 task.py set-scope <dir> <scope>            Set scope for PR title
+  python3 task.py archive <task-dir> [--allow-legacy]  Validate and archive completed task
+  python3 task.py add-subtask <parent> <child>       Link child task to parent
+  python3 task.py remove-subtask <parent> <child>    Unlink child from parent
+  python3 task.py list [--mine] [--status <status>]  List tasks
+  python3 task.py list-archive [YYYY-MM]             List archived tasks
 
 Monorepo options:
   --package <pkg>      Package name (validated against config.yaml packages)
@@ -331,20 +458,20 @@ List options:
   --status, -s <s>     Filter by status (planning, in_progress, review, completed)
 
 Examples:
-  python task.py create "Add login feature" --slug add-login
-  python task.py create "Add login feature" --slug add-login --package cli
-  python task.py create "Child task" --slug child --parent .trellis/tasks/01-21-parent
-  python task.py add-context <dir> implement .trellis/spec/cli/backend/auth.md "Auth guidelines"
-  python task.py set-branch <dir> task/add-login
-  python task.py start .trellis/tasks/01-21-add-login
-  python task.py current --source
-  python task.py finish
-  python task.py archive add-login
-  python task.py add-subtask parent-task child-task  # Link existing tasks
-  python task.py remove-subtask parent-task child-task
-  python task.py list                               # List all active tasks
-  python task.py list --mine                        # List my tasks only
-  python task.py list --mine --status in_progress   # List my in-progress tasks
+  python3 task.py create "Add login feature" --slug add-login
+  python3 task.py create "Add login feature" --slug add-login --package cli
+  python3 task.py create "Child task" --slug child --parent .trellis/tasks/01-21-parent
+  python3 task.py add-context <dir> implement .trellis/spec/cli/backend/auth.md "Auth guidelines"
+  python3 task.py set-branch <dir> task/add-login
+  python3 task.py start .trellis/tasks/01-21-add-login
+  python3 task.py current --source
+  python3 task.py finish
+  python3 task.py archive add-login
+  python3 task.py add-subtask parent-task child-task  # Link existing tasks
+  python3 task.py remove-subtask parent-task child-task
+  python3 task.py list                               # List all active tasks
+  python3 task.py list --mine                        # List my tasks only
+  python3 task.py list --mine --status in_progress   # List my in-progress tasks
 """)
 
 
@@ -375,7 +502,7 @@ def main() -> int:
         )
         print("See .trellis/workflow.md planning artifact guidance or run:", file=sys.stderr)
         print(
-            "  python ./.trellis/scripts/get_context.py --mode phase --step 1",
+            "  python3 ./.trellis/scripts/get_context.py --mode phase --step 1",
             file=sys.stderr,
         )
         print(
@@ -404,6 +531,7 @@ def main() -> int:
         action="store_true",
         help="Create the task without making it active in this session",
     )
+    p_create.add_argument("--complex", action="store_true", help="Require design.md and implement.md before activation")
 
     # add-context
     p_add = subparsers.add_parser("add-context", help="Add context entry")
@@ -416,6 +544,24 @@ def main() -> int:
     p_validate = subparsers.add_parser("validate", help="Validate context files")
     p_validate.add_argument("dir", help="Task directory")
 
+    # validate-lifecycle (dry run)
+    p_lifecycle = subparsers.add_parser("validate-lifecycle", help="Dry-run lifecycle gate")
+    p_lifecycle.add_argument("dir", help="Task directory")
+    p_lifecycle.add_argument("gate", choices=("activation", "completion"), help="Gate to validate")
+    p_lifecycle.add_argument("--allow-legacy", action="store_true", help="Explicitly continue a legacy unversioned task")
+    p_lifecycle.add_argument("--json", action="store_true", help="Print structured JSON result")
+
+    # skill-registry
+    p_registry = subparsers.add_parser("skill-registry", help="Validate or query skill routes")
+    registry_subparsers = p_registry.add_subparsers(dest="registry_command")
+    p_registry_validate = registry_subparsers.add_parser("validate", help="Validate bundled registry")
+    p_registry_validate.add_argument("--json", action="store_true", help="Print structured JSON result")
+    p_registry_lookup = registry_subparsers.add_parser("lookup", help="Lookup by skill or intent")
+    registry_lookup_group = p_registry_lookup.add_mutually_exclusive_group(required=True)
+    registry_lookup_group.add_argument("--skill", help="Exact skill id")
+    registry_lookup_group.add_argument("--intent", help="Intent category")
+    p_registry_lookup.add_argument("--phase", choices=("planning", "in_progress", "finish"))
+
     # list-context
     p_listctx = subparsers.add_parser("list-context", help="List context entries")
     p_listctx.add_argument("dir", help="Task directory")
@@ -423,6 +569,7 @@ def main() -> int:
     # start
     p_start = subparsers.add_parser("start", help="Set active task")
     p_start.add_argument("dir", help="Task directory")
+    p_start.add_argument("--allow-legacy", action="store_true", help="Explicitly continue a legacy unversioned task")
 
     # current
     p_current = subparsers.add_parser("current", help="Show active task")
@@ -451,6 +598,7 @@ def main() -> int:
     p_archive = subparsers.add_parser("archive", help="Archive task")
     p_archive.add_argument("name", help="Task directory or name")
     p_archive.add_argument("--no-commit", action="store_true", help="Skip auto git commit after archive")
+    p_archive.add_argument("--allow-legacy", action="store_true", help="Explicitly archive a legacy unversioned task")
 
     # list
     p_list = subparsers.add_parser("list", help="List tasks")
@@ -481,6 +629,8 @@ def main() -> int:
         "create": cmd_create,
         "add-context": cmd_add_context,
         "validate": cmd_validate,
+        "validate-lifecycle": cmd_validate_lifecycle,
+        "skill-registry": cmd_skill_registry,
         "list-context": cmd_list_context,
         "start": cmd_start,
         "current": cmd_current,

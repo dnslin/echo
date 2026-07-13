@@ -33,6 +33,7 @@ from .config import (
 from .git import run_git
 from .io import read_json, write_json
 from .log import Colors, colored
+from .lifecycle_contract import lifecycle_metadata, validate_lifecycle_gate
 from .paths import (
     DIR_ARCHIVE,
     DIR_TASKS,
@@ -138,7 +139,7 @@ _CODEX_CONFIG_DIR = ".codex"
 _SEED_EXAMPLE = (
     "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. "
     "Put spec/research files only — no code paths. "
-    "Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. "
+    "Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. "
     "Delete this line once real entries are added."
 )
 
@@ -330,7 +331,12 @@ def cmd_create(args: argparse.Namespace) -> int:
         "parent": None,
         "relatedFiles": [],
         "notes": "",
-        "meta": {},
+        "meta": {
+            "lifecycle": lifecycle_metadata(
+                "complex" if getattr(args, "complex", False) else "lightweight",
+                _has_subagent_platform(repo_root),
+            ),
+        },
     }
 
     write_json(task_json_path, task_data)
@@ -457,6 +463,25 @@ def cmd_archive(args: argparse.Namespace) -> int:
 
     dir_name = task_dir.name
     task_json_path = task_dir / FILE_TASK_JSON
+
+    gate_result = validate_lifecycle_gate(
+        task_dir,
+        repo_root,
+        "completion",
+        allow_legacy=getattr(args, "allow_legacy", False),
+    )
+    for warning in gate_result.warnings:
+        print(colored(f"WARNING [{warning.code}] {warning.message}", Colors.YELLOW), file=sys.stderr)
+        if warning.hint:
+            print(f"  Hint: {warning.hint}", file=sys.stderr)
+    if not gate_result.ok:
+        for blocker in gate_result.blockers:
+            print(colored(f"BLOCKER [{blocker.code}] {blocker.message}", Colors.RED), file=sys.stderr)
+            if blocker.path:
+                print(f"  Path: {blocker.path}", file=sys.stderr)
+            if blocker.hint:
+                print(f"  Hint: {blocker.hint}", file=sys.stderr)
+        return 1
 
     # Update status before archiving
     today = datetime.now().strftime("%Y-%m-%d")
@@ -721,7 +746,7 @@ def cmd_set_branch(args: argparse.Namespace) -> int:
 
     if not branch:
         print(colored("Error: Missing arguments", Colors.RED))
-        print("Usage: python task.py set-branch <task-dir> <branch-name>")
+        print("Usage: python3 task.py set-branch <task-dir> <branch-name>")
         return 1
 
     task_json = target_dir / FILE_TASK_JSON
@@ -752,8 +777,8 @@ def cmd_set_base_branch(args: argparse.Namespace) -> int:
 
     if not base_branch:
         print(colored("Error: Missing arguments", Colors.RED))
-        print("Usage: python task.py set-base-branch <task-dir> <base-branch>")
-        print("Example: python task.py set-base-branch <dir> develop")
+        print("Usage: python3 task.py set-base-branch <task-dir> <base-branch>")
+        print("Example: python3 task.py set-base-branch <dir> develop")
         print()
         print("This sets the target branch for PR (the branch your feature will merge into).")
         return 1
@@ -787,7 +812,7 @@ def cmd_set_scope(args: argparse.Namespace) -> int:
 
     if not scope:
         print(colored("Error: Missing arguments", Colors.RED))
-        print("Usage: python task.py set-scope <task-dir> <scope>")
+        print("Usage: python3 task.py set-scope <task-dir> <scope>")
         return 1
 
     task_json = target_dir / FILE_TASK_JSON
