@@ -221,6 +221,16 @@ Manual/HITL acceptance is required for desktop/media behavior:
 
 Verification rule: run the specific command or manual scenario for the task before calling it complete. If a command fails, fix the cause before moving on.
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues for `dnslin/echo` through `gh`. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+This repository uses a single-context layout: root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.
+
 <!-- TRELLIS:START -->
 # Trellis Instructions
 
