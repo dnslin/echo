@@ -44,6 +44,8 @@ tasks:
       GOOS: windows
       CGO_ENABLED: '0'
       GOARCH: '{{.ARCH | default ARCH}}'
+      # Go 1.26 on Windows faults in the compiler's parallel path during this build.
+      GOMAXPROCS: '1'
 
   package:
     summary: Creates an NSIS installer for Windows

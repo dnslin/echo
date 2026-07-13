@@ -1,0 +1,12 @@
+{
+  "schema": "trellis.review-evidence",
+  "version": 1,
+  "status": "passed",
+  "reviewed_at": "2026-07-13T08:01:27.612Z",
+  "axes": {
+    "standards": "passed",
+    "spec": "passed"
+  },
+  "reviewer": "trellis-check",
+  "summary": "Final independent source review confirmed accessible device status, retry operation identity, no-device reconciliation before Save, and scope boundaries."
+}

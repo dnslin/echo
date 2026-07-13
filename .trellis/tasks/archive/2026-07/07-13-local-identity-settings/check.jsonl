@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/07-13-local-identity-settings/prd.md","reason":"Task-specific acceptance criteria and non-goals for implementation review."}
+{"file":".trellis/tasks/07-13-local-identity-settings/design.md","reason":"Review the storage seam, normalization rules, and frontend safety contract against the implementation."}
+{"file":"CONTEXT.md","reason":"Verify business-language and local-only constraints remain intact."}
+{"file":"docs/adr/0012-client-generated-anonymous-identity.md","reason":"Verify no account, server-issued identity, or cross-device behavior was introduced."}
+{"file":"docs/adr/0017-local-settings-in-user-config.md","reason":"Verify Wails/Go current-user persistence and excluded settings are preserved."}
+{"file":"docs/adr/0029-layered-testing-with-manual-desktop-media-acceptance.md","reason":"Verify deterministic local settings and voice-state tests cover the required behavior."}
+{"file":"docs/ui/client-ui-spec.md","reason":"Verify defaults and persisted-free-talk behavior are compatible with later UI flows."}

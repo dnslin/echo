@@ -591,3 +591,105 @@ Fixed durable member transitions, room-scoped WebSocket serialization, reconnect
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Implement Issue 17 local settings
+
+**Date**: 2026-07-13
+**Task**: Implement Issue 17 local settings
+**Package**: cli
+**Branch**: `feat/issue-17-local-identity-settings`
+
+### Summary
+
+Implemented local anonymous identity and JSON settings persistence with corruption recovery, voice-send safety, focused tests, and independent quality evidence.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a2729a7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 19: 接入本地设置运行时
+
+**Date**: 2026-07-13
+**Task**: 接入本地设置运行时
+**Package**: cli
+**Branch**: `feat/issue-17-local-identity-settings`
+
+### Summary
+
+将 config.Store 接入 Wails SettingsService 与生成 binding，完成 React 本地设置运行时、Unicode 昵称校验、语音安全门控和 Windows build 稳定性验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `da8353b5fc30508ac942233563bc263245e5eb9f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 20: 修复设置运行时与设备选择
+
+**Date**: 2026-07-13
+**Task**: 修复设置运行时与设备选择
+**Package**: cli
+**Branch**: `feat/issue-17-local-identity-settings`
+
+### Summary
+
+修复 WebView2 设备枚举、权限状态、失效偏好回退、Save/Load/头像重试、可访问状态区与 Wails 窗口布局；自动与 Windows HITL 验收通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `82a2c54` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

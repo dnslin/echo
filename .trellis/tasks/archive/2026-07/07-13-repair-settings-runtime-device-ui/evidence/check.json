@@ -1,0 +1,41 @@
+{
+  "schema": "trellis.check-evidence",
+  "version": 1,
+  "status": "passed",
+  "checked_at": "2026-07-13T08:01:27.612Z",
+  "scope": [
+    "apps/desktop/main.go",
+    "apps/desktop/main_test.go",
+    "apps/desktop/frontend/index.html",
+    "apps/desktop/frontend/src/App.tsx",
+    "apps/desktop/frontend/src/App.css",
+    "apps/desktop/frontend/src/App.test.tsx",
+    "apps/desktop/frontend/src/media/devices.ts",
+    "apps/desktop/frontend/src/media/devices.test.ts"
+  ],
+  "commands": [
+    {
+      "command": "go test ./... (cwd: apps/desktop)",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "npm run test:run (cwd: apps/desktop/frontend)",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "npm run build:dev (cwd: apps/desktop/frontend)",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "wails3 build (cwd: apps/desktop)",
+      "status": "passed",
+      "exit_code": 0
+    }
+  ],
+  "manual_checks": [
+    "Windows/WebView2: user confirmed device permission and selection, saved-setting restart recovery, and minimum-window scrolling behavior."
+  ]
+}

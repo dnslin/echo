@@ -1,0 +1,8 @@
+{
+  "schema": "trellis.spec-disposition",
+  "version": 1,
+  "status": "not_needed",
+  "recorded_at": "2026-07-13T08:01:27.612Z",
+  "rationale": "The repair implements existing task and ADR contracts without establishing a reusable project-wide convention beyond the already documented browser-media and Wails desktop boundaries.",
+  "artifacts": []
+}

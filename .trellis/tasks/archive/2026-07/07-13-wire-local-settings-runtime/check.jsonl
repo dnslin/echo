@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/07-13-wire-local-settings-runtime/prd.md","reason":"Task-specific runtime integration requirements, acceptance criteria, and exclusions."}
+{"file":".trellis/tasks/07-13-wire-local-settings-runtime/design.md","reason":"Review Wails service seam, generated binding contract, startup order, and UI persistence flow."}
+{"file":"CONTEXT.md","reason":"Verify anonymous identity and local-only product constraints remain intact."}
+{"file":"docs/adr/0017-local-settings-in-user-config.md","reason":"Verify Go/Wails owns current-user persistence and no cloud/server profile was introduced."}
+{"file":"docs/ui/client-ui-spec.md","reason":"Verify first-nickname validation and free-talk safety match the client UI contract."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify settings defaults and contracts have one owner rather than drifting across Go and TypeScript."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify generated binding is the explicit Go-to-React contract and error paths are tested."}

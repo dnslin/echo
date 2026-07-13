@@ -1,0 +1,43 @@
+{
+  "schema": "trellis.check-evidence",
+  "version": 1,
+  "status": "passed",
+  "checked_at": "2026-07-13T05:37:46.130598Z",
+  "scope": [
+    "apps/desktop/internal/config",
+    "apps/desktop/internal/app",
+    "apps/desktop/main.go",
+    "apps/desktop/frontend/src/App.tsx",
+    "apps/desktop/frontend/src/App.test.tsx",
+    "apps/desktop/frontend/src/state/voiceState.ts",
+    "apps/desktop/build/windows/Taskfile.yml",
+    "apps/desktop/frontend/bindings/echo"
+  ],
+  "commands": [
+    {
+      "command": "go test ./...",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "npm run test:run",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "npm run build:dev",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "wails3 build",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "python ./.trellis/scripts/task.py validate .trellis/tasks/07-13-wire-local-settings-runtime",
+      "status": "passed",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "schema": "trellis.check-evidence",
+  "version": 1,
+  "status": "passed",
+  "checked_at": "2026-07-13T11:51:37+08:00",
+  "scope": [
+    "apps/desktop/internal/config/store.go",
+    "apps/desktop/internal/config/store_test.go",
+    "apps/desktop/frontend/src/settings/settings.ts",
+    "apps/desktop/frontend/src/settings/settings.test.ts",
+    "apps/desktop/frontend/src/state/voiceState.ts",
+    "apps/desktop/frontend/src/state/voiceState.test.ts",
+    ".trellis/tasks/07-13-local-identity-settings/prd.md",
+    ".trellis/tasks/07-13-local-identity-settings/design.md",
+    ".trellis/tasks/07-13-local-identity-settings/implement.md",
+    ".trellis/tasks/07-13-local-identity-settings/check.jsonl"
+  ],
+  "commands": [
+    {
+      "command": "gofmt -d internal/config/store.go internal/config/store_test.go",
+      "cwd": "apps/desktop",
+      "status": "passed",
+      "exit_code": 0,
+      "outcome": "No output; both Go files are formatted."
+    },
+    {
+      "command": "go test ./...",
+      "cwd": "apps/desktop",
+      "status": "passed",
+      "exit_code": 0,
+      "outcome": "3 packages passed after the read-I/O regression test was added."
+    },
+    {
+      "command": "npm run build:dev",
+      "cwd": "apps/desktop/frontend",
+      "status": "passed",
+      "exit_code": 0,
+      "outcome": "TypeScript compilation and Vite development build completed successfully."
+    },
+    {
+      "command": "npm run test:run",
+      "cwd": "apps/desktop/frontend",
+      "status": "passed",
+      "exit_code": 0,
+      "outcome": "Vitest passed 8 files and 44 tests on the isolated retry."
+    }
+  ],
+  "attempts": [
+    {
+      "command": "npm run test:run",
+      "cwd": "apps/desktop/frontend",
+      "status": "failed",
+      "exit_code": 1,
+      "outcome": "Vitest reported 7 passing files, then a fork worker exited unexpectedly."
+    },
+    {
+      "command": "npm run test:run",
+      "cwd": "apps/desktop/frontend",
+      "status": "passed",
+      "exit_code": 0,
+      "outcome": "Isolated retry passed 8 files and 44 tests."
+    }
+  ],
+  "diagnostics": {
+    "tool": "gopls",
+    "files": [
+      "apps/desktop/internal/config/store.go",
+      "apps/desktop/internal/config/store_test.go"
+    ],
+    "status": "passed",
+    "outcome": "No diagnostics."
+  },
+  "sources_reviewed": [
+    "CONTEXT.md",
+    "prd.md",
+    "design.md",
+    "implement.md",
+    "docs/adr/0012-client-generated-anonymous-identity.md",
+    "docs/adr/0017-local-settings-in-user-config.md",
+    "docs/adr/0029-layered-testing-with-manual-desktop-media-acceptance.md",
+    "docs/ui/client-ui-spec.md",
+    ".trellis/spec/guides/index.md",
+    ".trellis/spec/guides/code-reuse-thinking-guide.md"
+  ]
+}

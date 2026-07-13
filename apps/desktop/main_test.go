@@ -1,30 +1,24 @@
 package main
 
 import (
-	"errors"
 	"testing"
 
-	"echo/apps/desktop/internal/keyboard"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-func TestHookStatusFromErrorReportsUnsupportedPlatform(t *testing.T) {
-	status := hookStatusFromError(keyboard.ErrUnsupported)
+func TestMainWindowOptionsConstrainSettingsLayout(t *testing.T) {
+	options := mainWindowOptions()
 
-	if status.Status != keyboard.HookStatusUnsupported {
-		t.Fatalf("unexpected status: got %q want %q", status.Status, keyboard.HookStatusUnsupported)
+	if options.Width != 720 || options.Height != 720 {
+		t.Fatalf("initial size = %dx%d, want 720x720", options.Width, options.Height)
 	}
-	if status.Message == "" {
-		t.Fatal("expected unsupported status to include an error message")
+	if options.MinWidth != 600 || options.MinHeight != 640 {
+		t.Fatalf("minimum size = %dx%d, want 600x640", options.MinWidth, options.MinHeight)
 	}
-}
-
-func TestHookStatusFromErrorReportsDisabledFailure(t *testing.T) {
-	status := hookStatusFromError(errors.New("install low-level keyboard hook: access denied"))
-
-	if status.Status != keyboard.HookStatusDisabled {
-		t.Fatalf("unexpected status: got %q want %q", status.Status, keyboard.HookStatusDisabled)
+	if options.MaxWidth != 1000 || options.MaxHeight != 900 {
+		t.Fatalf("maximum size = %dx%d, want 1000x900", options.MaxWidth, options.MaxHeight)
 	}
-	if status.Message != "install low-level keyboard hook: access denied" {
-		t.Fatalf("unexpected message: %q", status.Message)
+	if options.BackgroundColour != application.NewRGB(243, 246, 248) {
+		t.Fatalf("background colour = %#v, want light app canvas", options.BackgroundColour)
 	}
 }

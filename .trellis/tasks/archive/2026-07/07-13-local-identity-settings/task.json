@@ -1,0 +1,33 @@
+{
+  "id": "local-identity-settings",
+  "name": "local-identity-settings",
+  "title": "本地匿名身份与设置",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": "cli",
+  "priority": "P2",
+  "creator": "dnslin",
+  "assignee": "dnslin",
+  "createdAt": "2026-07-13",
+  "completedAt": "2026-07-13",
+  "branch": "feat/issue-17-local-identity-settings",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "lifecycle": {
+      "contract_version": 1,
+      "complexity": "lightweight",
+      "context_manifests_required": true,
+      "review_required": true
+    }
+  }
+}

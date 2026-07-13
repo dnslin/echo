@@ -5,6 +5,9 @@ import (
 	"log"
 	"sync/atomic"
 
+	"echo/apps/desktop/internal/app"
+	"echo/apps/desktop/internal/config"
+
 	"echo/apps/desktop/internal/keyboard"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -12,21 +15,26 @@ import (
 )
 
 func main() {
+	settingsStore, err := config.NewDefaultStore()
+	if err != nil {
+		log.Fatalf("create settings store: %v", err)
+	}
+	if _, err := settingsStore.Load(); err != nil {
+		log.Fatalf("load local settings: %v", err)
+	}
+	settingsService := app.NewSettingsService(settingsStore)
 	app := application.New(application.Options{
 		Name:        "echo",
 		Description: "echo 桌面端骨架",
+		Services: []application.Service{
+			application.NewService(settingsService),
+		},
 		Assets: application.AssetOptions{
 			Handler: assetHandler(),
 		},
 	})
 
-	mainWindow := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "echo",
-		Width:            1000,
-		Height:           618,
-		BackgroundColour: application.NewRGB(6, 7, 15),
-		URL:              "/",
-	})
+	mainWindow := app.Window.NewWithOptions(mainWindowOptions())
 
 	var allowQuit atomic.Bool
 	mainWindow.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
@@ -75,6 +83,20 @@ func main() {
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func mainWindowOptions() application.WebviewWindowOptions {
+	return application.WebviewWindowOptions{
+		Title:            "echo",
+		Width:            720,
+		Height:           720,
+		MinWidth:         600,
+		MinHeight:        640,
+		MaxWidth:         1000,
+		MaxHeight:        900,
+		BackgroundColour: application.NewRGB(243, 246, 248),
+		URL:              "/",
 	}
 }
 
