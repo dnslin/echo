@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/database-guidelines.md","reason":"Check transaction boundary, capacity counting states, and room lifecycle persistence."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Check join error codes/status/copy remain documented and unchanged."}
-{"file":".trellis/tasks/07-08-fix-join-room-review-findings/prd.md","reason":"Verify all acceptance criteria are covered by tests."}
-{"file":".trellis/tasks/07-08-fix-join-room-review-findings/design.md","reason":"Verify implementation follows atomic join design without service/HTTP locking."}

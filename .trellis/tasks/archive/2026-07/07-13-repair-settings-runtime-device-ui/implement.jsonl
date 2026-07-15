@@ -1,8 +1,0 @@
-{"file":"CONTEXT.md","reason":"Defines local settings, microphone/output device, and free-talk vocabulary and MVP exclusions."}
-{"file":"docs/adr/0005-wails3-desktop-shell.md","reason":"Locks Wails 3 as the Windows shell boundary for window sizing and WebView2."}
-{"file":"docs/adr/0007-webview-livekit-audio-devices.md","reason":"Assigns device discovery and switching to WebView2/LiveKit JS rather than Go audio code."}
-{"file":"docs/adr/0017-local-settings-in-user-config.md","reason":"Preserves Wails/Go ownership of saved local device preferences."}
-{"file":"docs/ui/client-ui-spec.md","reason":"Provides cold-light visual tokens and desktop window/layout constraints."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Guides the WebView device adapter, generated binding, and UI error-state boundaries."}
-{"file":".trellis/tasks/07-13-repair-settings-runtime-device-ui/prd.md","reason":"Task-specific requirements, exclusions, and acceptance criteria."}
-{"file":".trellis/tasks/07-13-repair-settings-runtime-device-ui/design.md","reason":"Approved technical design and rollback boundary."}

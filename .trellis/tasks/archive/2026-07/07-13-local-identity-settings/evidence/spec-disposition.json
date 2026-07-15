@@ -1,8 +1,0 @@
-{
-  "schema": "trellis.spec-disposition",
-  "version": 1,
-  "status": "not_needed",
-  "recorded_at": "2026-07-13T11:54:04+08:00",
-  "rationale": "Issue #17 implements existing ADR 0012/0017 and the documented Task 11 settings contract without changing a repository-global convention, Wails bridge, external API, database schema, or infrastructure. The task PRD/design/implementation artifacts and existing ADRs already own the concrete storage, local-only, and voice-safety rules; adding a new global spec would duplicate them.",
-  "artifacts": []
-}

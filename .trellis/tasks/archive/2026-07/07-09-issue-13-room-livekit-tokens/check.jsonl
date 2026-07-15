@@ -1,8 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend quality checks for services/api changes"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Check config, router, module, and command boundaries"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Check SQLite room/member repository authorization contracts"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "Check HTTP envelope and OpenAPI error mappings"}
-{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Check token and secret logging boundaries"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check credential data flow across config, store, service, HTTP, and OpenAPI"}
-{"file": ".trellis/tasks/07-09-issue-13-room-livekit-tokens/research/livekit-token-go.md", "reason": "Check LiveKit token implementation against documented Go API"}

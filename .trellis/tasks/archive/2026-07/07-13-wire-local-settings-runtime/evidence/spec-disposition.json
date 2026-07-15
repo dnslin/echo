@@ -1,8 +1,0 @@
-{
-  "schema": "trellis.spec-disposition",
-  "version": 1,
-  "status": "not_needed",
-  "recorded_at": "2026-07-13T05:37:46.130598Z",
-  "rationale": "The durable contracts are already captured in the task PRD/design, CONTEXT.md, and ADR 0017. The Go 1.26 Windows compiler workaround is scoped and explained at its sole native-build Taskfile use site; it is not a project-wide coding convention.",
-  "artifacts": []
-}

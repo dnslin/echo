@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/07-07-issue-6-bootstrap-workspace/research/issue-6-evidence.md","reason":"Issue #6 scope, acceptance criteria, boundaries, repository evidence, and toolchain facts for implementation."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Bootstrap touches desktop, API, contracts, and config boundaries; use this to avoid accidental cross-layer drift."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Prevent premature shared abstractions and duplicated contract assumptions while scaffolding modules."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for API module conventions during bootstrap."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index for desktop frontend scaffold and test command setup."}

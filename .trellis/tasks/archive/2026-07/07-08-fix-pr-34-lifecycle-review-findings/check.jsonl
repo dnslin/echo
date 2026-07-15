@@ -1,5 +1,0 @@
-{"file":".trellis/spec/backend/database-guidelines.md","reason":"Check store changes against lifecycle transaction and expiry rules."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Check service sentinel mapping remains compatible with HTTP behavior."}
-{"file":".trellis/tasks/07-08-fix-pr-34-lifecycle-review-findings/prd.md","reason":"Check all acceptance criteria are met."}
-{"file":".trellis/tasks/07-08-fix-pr-34-lifecycle-review-findings/design.md","reason":"Check implementation preserves store-owned lifecycle decisions."}
-{"file":".trellis/tasks/07-08-fix-pr-34-lifecycle-review-findings/implement.md","reason":"Check required validation commands were run."}

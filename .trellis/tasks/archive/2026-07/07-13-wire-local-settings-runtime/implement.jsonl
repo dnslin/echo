@@ -1,8 +1,0 @@
-{"file":"CONTEXT.md","reason":"Defines anonymous identity, random avatar, local settings, and free-talk product terminology and exclusions."}
-{"file":"prd.md","reason":"Root product requirements for initial identity, local settings, privacy, and free-talk safety."}
-{"file":"design.md","reason":"Assigns local setting persistence to the Wails Go shell and documents the desktop/frontend boundary."}
-{"file":"implement.md","reason":"Task 11 establishes the existing Store and voice-state implementation this remediation wires into runtime."}
-{"file":"docs/adr/0017-local-settings-in-user-config.md","reason":"Locks current-user Wails/Go local-storage ownership and excludes server/cloud profiles."}
-{"file":"docs/ui/client-ui-spec.md","reason":"Defines first nickname page trigger, validation, and persisted-free-talk UI constraints."}
-{"file":".trellis/tasks/archive/2026-07/07-13-local-identity-settings/prd.md","reason":"Prior task acceptance mapping and scope boundaries for the Store already on this branch."}
-{"file":".trellis/tasks/07-13-wire-local-settings-runtime/research/diagnosis/runtime-settings.md","reason":"Records the review finding, red feedback loop, hypotheses, and fix evidence for this remediation."}

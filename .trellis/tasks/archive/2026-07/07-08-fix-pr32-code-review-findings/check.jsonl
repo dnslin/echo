@@ -1,6 +1,0 @@
-{"file":".trellis/tasks/07-08-fix-pr32-code-review-findings/prd.md","reason":"Verify all code-review findings are addressed."}
-{"file":".trellis/tasks/07-08-fix-pr32-code-review-findings/implement.md","reason":"Verification commands and scope guard."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Check error codes, statuses, response envelopes, and OpenAPI examples."}
-{"file":".trellis/spec/backend/database-guidelines.md","reason":"Check SQLite persistence and cleanup behavior."}
-{"file":"services/api/internal/http/handlers_test.go","reason":"Regression coverage for handler boundary fixes."}
-{"file":"services/api/internal/room/service_test.go","reason":"Regression coverage for service validation bounds."}

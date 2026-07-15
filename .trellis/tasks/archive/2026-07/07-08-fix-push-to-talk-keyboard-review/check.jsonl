@@ -1,5 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spike UI and state guidelines index"}
-{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Verify keyboard spike contract examples match code"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check Go-to-React event payload consistency"}
-{"file": ".trellis/tasks/07-08-fix-push-to-talk-keyboard-review/research/wails-keyboard-event-ordering.md", "reason": "Verify P1 ordering fix addresses Wails Emit behavior"}

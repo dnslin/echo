@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/07-08-issue-10-create-room-api/prd.md","reason":"验收标准 AC1-AC10 是 trellis-check 的缺陷判定来源。"}
-{"file":".trellis/tasks/07-08-issue-10-create-room-api/design.md","reason":"检查实现是否保持在创建房间垂直路径边界内，并符合 API/存储设计。"}
-{"file":".trellis/tasks/07-08-issue-10-create-room-api/implement.md","reason":"检查必须覆盖的测试场景和最终验证命令。"}
-{"file":"docs/adr/0032-openapi-http-websocket-contract-docs.md","reason":"检查 OpenAPI 是否记录创建房间请求、响应和错误契约。"}
-{"file":"docs/adr/0009-gin-gorm-business-service.md","reason":"检查后端实现是否使用 Gin/GORM 并保持 API module 边界。"}

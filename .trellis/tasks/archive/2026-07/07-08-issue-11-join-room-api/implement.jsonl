@@ -1,6 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for API service changes"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Router and API module boundaries"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQLite/GORM repository contracts"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "HTTP JSON error envelope and product copy rules"}
-{"file": ".trellis/spec/backend/invite-guidelines.md", "reason": "Invite-code normalization contract for join API"}

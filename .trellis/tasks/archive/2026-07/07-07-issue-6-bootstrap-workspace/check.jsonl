@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/07-07-issue-6-bootstrap-workspace/research/issue-6-evidence.md","reason":"Check implementation against Issue #6 acceptance criteria and explicit out-of-scope boundaries."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Quality check should verify created module, contract, and config boundaries do not drift."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Quality check should reject premature shared abstractions or duplicated contract logic."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for reviewing API scaffold quality."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index for reviewing frontend scaffold and test command quality."}

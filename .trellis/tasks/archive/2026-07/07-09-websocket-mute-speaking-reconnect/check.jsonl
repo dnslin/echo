@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend quality check entrypoint and mandatory full-suite verification commands."}
-{"file": ".trellis/spec/backend/websocket-room-state-guidelines.md", "reason": "Check WebSocket state transitions, sequence rules, heartbeat behavior, and safe close semantics against the contract."}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Check persistence changes for member state updates, capacity semantics, and leave/expiry side effects."}
-{"file": ".trellis/spec/backend/credential-guidelines.md", "reason": "Check room-session authorization, active-member rules, and token/query redaction behavior around reconnect paths."}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check ws/service/store/main wiring consistency and ensure payload/state contracts stay owned at one boundary."}
-{"file": ".trellis/tasks/07-09-websocket-mute-speaking-reconnect/research/issue-16-evidence.md", "reason": "Review implementation against the repository evidence, explicit scope boundaries, and planning decisions for Issue 16."}

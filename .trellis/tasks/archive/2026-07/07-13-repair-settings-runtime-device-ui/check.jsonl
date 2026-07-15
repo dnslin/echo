@@ -1,9 +1,0 @@
-{"file":"CONTEXT.md","reason":"Verify local-only identity/settings terminology and no account or cloud scope drift."}
-{"file":"docs/adr/0005-wails3-desktop-shell.md","reason":"Verify Wails window and WebView2 changes remain inside desktop shell ownership."}
-{"file":"docs/adr/0007-webview-livekit-audio-devices.md","reason":"Verify no Go audio stack is introduced and unsupported output selection falls back explicitly."}
-{"file":"docs/adr/0017-local-settings-in-user-config.md","reason":"Verify saved device preferences remain local and schema-compatible."}
-{"file":"docs/ui/client-ui-spec.md","reason":"Verify light visual system, compact desktop layout, and responsive accessibility."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify device IDs and settings contracts retain one owner."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify device state, persistence, generated binding, and UI feedback flow correctly."}
-{"file":".trellis/tasks/07-13-repair-settings-runtime-device-ui/prd.md","reason":"Review each task acceptance criterion and exclusion."}
-{"file":".trellis/tasks/07-13-repair-settings-runtime-device-ui/design.md","reason":"Review declared WebView, window, optional runtime asset, and rollback decisions."}

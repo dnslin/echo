@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/07-08-fix-pr32-code-review-findings/prd.md","reason":"Current repair requirements and acceptance criteria."}
-{"file":".trellis/tasks/07-08-fix-pr32-code-review-findings/design.md","reason":"Technical design for context, input bounds, OpenAPI, and SQLite cleanup fixes."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"HTTP error envelope and OpenAPI error-code contract for create-room."}
-{"file":".trellis/spec/backend/database-guidelines.md","reason":"SQLite/GORM persistence and migration cleanup rules."}
-{"file":"services/api/openapi.yaml","reason":"Public HTTP contract to keep synchronized with handlers."}

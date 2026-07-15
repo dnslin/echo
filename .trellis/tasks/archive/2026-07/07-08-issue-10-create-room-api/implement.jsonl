@@ -1,6 +1,0 @@
-{"file":".trellis/tasks/07-08-issue-10-create-room-api/prd.md","reason":"Issue #10 创建临时房间 API 的需求、范围、验收标准和非目标。"}
-{"file":".trellis/tasks/07-08-issue-10-create-room-api/design.md","reason":"创建房间路径的技术边界、数据模型、API 响应和风险控制。"}
-{"file":".trellis/tasks/07-08-issue-10-create-room-api/implement.md","reason":"实现顺序、测试场景、验证命令和回滚点。"}
-{"file":"docs/adr/0008-business-rooms-own-product-state.md","reason":"确认业务服务拥有产品房间状态，LiveKit 只拥有媒体房间。"}
-{"file":"docs/adr/0013-server-generated-invite-codes.md","reason":"确认邀请码由服务端生成、6 位大写字母数字并由数据库唯一性保护。"}
-{"file":"docs/adr/0019-http-commands-websocket-state.md","reason":"确认本任务实现 HTTP command，不扩展 WebSocket 状态流。"}

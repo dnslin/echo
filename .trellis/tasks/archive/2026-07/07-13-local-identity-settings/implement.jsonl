@@ -1,8 +1,0 @@
-{"file":"CONTEXT.md","reason":"Defines anonymous identity, random avatar, local settings, device fallback, and voice-mode vocabulary and exclusions."}
-{"file":"prd.md","reason":"Product requirements for persisted settings, first launch, privacy, and free-talk safety."}
-{"file":"design.md","reason":"Assigns local settings to the Wails Go shell and records the required persistence fields."}
-{"file":"implement.md","reason":"Task 11 specifies the target Go config store, TypeScript contracts, defaults, and focused verification commands."}
-{"file":"docs/adr/0012-client-generated-anonymous-identity.md","reason":"Locks anonymous identity to client generation and rejects account semantics."}
-{"file":"docs/adr/0017-local-settings-in-user-config.md","reason":"Locks current-user local storage ownership and excludes cloud/server preferences."}
-{"file":"docs/adr/0029-layered-testing-with-manual-desktop-media-acceptance.md","reason":"Requires deterministic automated tests for local settings and voice state."}
-{"file":"docs/ui/client-ui-spec.md","reason":"Defines first-nickname restore, settings persistence, default V key, and no auto-free-talk behavior."}

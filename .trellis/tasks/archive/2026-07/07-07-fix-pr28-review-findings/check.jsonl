@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/directory-structure.md","reason":"Check desktop build, frontend test, Windows metadata, and no-template/demo constraints after fixes."}
-{"file":".trellis/spec/backend/directory-structure.md","reason":"Check Go workspace/API smoke route and /healthz validation after fixes."}
-{"file":"docs/adr/0032-openapi-http-websocket-contract-docs.md","reason":"Check that the OpenAPI/WebSocket contract separation remains intact."}
-{"file":"docs/ui/client-ui-spec.md","reason":"Check user-visible copy and no-gradient styling against current UI rules."}

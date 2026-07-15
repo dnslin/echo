@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend pre-development checklist and required verification commands for services/api changes."}
-{"file": ".trellis/spec/backend/websocket-room-state-guidelines.md", "reason": "Authoritative backend WebSocket handshake, snapshot, broadcast, sequence, heartbeat, and room-state transport constraints."}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Repository and lifecycle rules for member state persistence, capacity counting, and leave/expiry semantics."}
-{"file": ".trellis/spec/backend/credential-guidelines.md", "reason": "Room-session token authorization and active-member eligibility rules used by the WebSocket handshake and reconnect path."}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "This task spans ws, room service, store, and runtime wiring; use the guide to avoid boundary drift."}
-{"file": ".trellis/tasks/07-09-websocket-mute-speaking-reconnect/research/issue-16-evidence.md", "reason": "Current repository evidence, scope decisions, and the chosen reconnect-state design direction for Issue 16."}
