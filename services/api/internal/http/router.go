@@ -11,13 +11,14 @@ type roomWebSocket interface {
 }
 
 type routerConfig struct {
-	roomCreator       roomCreator
-	roomJoiner        roomJoiner
-	roomLeaver        roomLeaver
-	roomAuthorizer    roomMemberAuthorizer
-	roomEventNotifier roomEventNotifier
-	roomWebSocket     roomWebSocket
-	credentialConfig  CredentialConfig
+	roomCreator        roomCreator
+	roomJoiner         roomJoiner
+	roomLeaver         roomLeaver
+	roomAuthorizer     roomMemberAuthorizer
+	roomEventNotifier  roomEventNotifier
+	roomWebSocket      roomWebSocket
+	credentialConfig   CredentialConfig
+	corsOriginPatterns []string
 }
 
 type RouterOption func(*routerConfig)
@@ -64,6 +65,13 @@ func WithCredentialConfig(credentialConfig CredentialConfig) RouterOption {
 	}
 }
 
+// WithCORSOriginPatterns permits browser requests from explicit origins only.
+func WithCORSOriginPatterns(originPatterns []string) RouterOption {
+	return func(config *routerConfig) {
+		config.corsOriginPatterns = append([]string(nil), originPatterns...)
+	}
+}
+
 func NewRouter(options ...RouterOption) *gin.Engine {
 	config := routerConfig{}
 	for _, option := range options {
@@ -72,6 +80,7 @@ func NewRouter(options ...RouterOption) *gin.Engine {
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(corsMiddleware(config.corsOriginPatterns))
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})

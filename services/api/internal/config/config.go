@@ -18,6 +18,7 @@ type Config struct {
 	RoomSessionTokenTTL     time.Duration
 	LiveKitTokenTTL         time.Duration
 	WebSocketOriginPatterns []string
+	HTTPOriginPatterns      []string
 	LogDir                  string
 }
 
@@ -29,6 +30,14 @@ var defaultWebSocketOriginPatterns = []string{
 	"wails://wails.localhost:*",
 }
 
+var defaultHTTPOriginPatterns = []string{
+	"http://localhost:*",
+	"http://127.0.0.1:*",
+	"http://wails.localhost:*",
+	"wails://wails.localhost",
+	"wails://wails.localhost:*",
+}
+
 func Default() Config {
 	return Config{
 		HTTPAddr:                ":8080",
@@ -36,6 +45,7 @@ func Default() Config {
 		RoomSessionTokenTTL:     2 * time.Hour,
 		LiveKitTokenTTL:         10 * time.Minute,
 		WebSocketOriginPatterns: append([]string(nil), defaultWebSocketOriginPatterns...),
+		HTTPOriginPatterns:      append([]string(nil), defaultHTTPOriginPatterns...),
 		LogDir:                  "./logs",
 	}
 }
@@ -49,6 +59,7 @@ func FromEnv() Config {
 	overlayString(&cfg.LiveKitAPISecret, "ECHO_LIVEKIT_API_SECRET")
 	overlayString(&cfg.RoomSessionSecret, "ECHO_ROOM_SESSION_SECRET")
 	overlayStringSlice(&cfg.WebSocketOriginPatterns, "ECHO_WS_ORIGIN_PATTERNS")
+	overlayStringSlice(&cfg.HTTPOriginPatterns, "ECHO_HTTP_ORIGIN_PATTERNS")
 	overlayString(&cfg.LogDir, "ECHO_LOG_DIR")
 	return cfg
 }

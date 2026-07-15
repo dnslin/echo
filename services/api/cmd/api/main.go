@@ -49,6 +49,7 @@ func newRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 		httpapi.WithRoomMemberAuthorizer(roomService),
 		httpapi.WithRoomWebSocket(roomHub),
 		httpapi.WithRoomEventNotifier(roomHub),
+		httpapi.WithCORSOriginPatterns(cfg.HTTPOriginPatterns),
 		httpapi.WithCredentialConfig(httpapi.CredentialConfig{
 			LiveKitURL:          cfg.LiveKitURL,
 			LiveKitAPIKey:       cfg.LiveKitAPIKey,

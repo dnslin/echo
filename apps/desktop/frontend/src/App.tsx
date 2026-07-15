@@ -10,6 +10,8 @@ import {
   type AudioDeviceInventory,
   type AudioDeviceStatus,
 } from './media/devices'
+import { createRoomClient, type RoomEntry } from './api/client'
+import { RoomEntryView } from './room/RoomEntryView'
 
 function countCodePoints(value: string): number {
   let count = 0
@@ -30,6 +32,9 @@ const initialDeviceInventory: AudioDeviceInventory = {
   outputs: [],
 }
 
+const roomClient = createRoomClient({ baseURL: (import.meta.env.VITE_ECHO_API_BASE_URL ?? '').trim() })
+
+type AppPage = 'home' | 'settings' | 'room'
 type SettingsError = 'load' | 'save' | 'reset-avatar'
 
 function inputDeviceStatusMessage(status: AudioDeviceStatus): string {
@@ -67,6 +72,8 @@ function App() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [nicknameDraft, setNicknameDraft] = useState('')
   const [requiresNickname, setRequiresNickname] = useState(false)
+  const [page, setPage] = useState<AppPage>('home')
+  const [roomEntry, setRoomEntry] = useState<RoomEntry | null>(null)
   const [error, setError] = useState<SettingsError | null>(null)
   const [saving, setSaving] = useState(false)
   const [devices, setDevices] = useState<AudioDeviceInventory>(initialDeviceInventory)
@@ -149,6 +156,7 @@ function App() {
       setSettings(persisted)
       setNicknameDraft(persisted.nickname)
       setRequiresNickname(false)
+      if (isFirstRun) setPage('home')
       setSaveNotice('本地设置已保存')
     } catch {
       setError('save')
@@ -234,6 +242,40 @@ function App() {
     )
   }
 
+  if (page === 'room' && roomEntry) {
+    return (
+      <main className="room-entry-app room-entry-app--viewport">
+        <section className="room-entry-card" aria-labelledby="room-page-title">
+          <p className="room-entry-brand">echo</p>
+          <h1 id="room-page-title" className="room-entry-card__title">已进入临时房间</h1>
+          <p className="room-entry-card__description">{roomEntry.room.name}</p>
+          <p className="settings-field__label">邀请码</p>
+          <div className="room-entry-invite-code" aria-label={`邀请码 ${roomEntry.room.inviteCode}`}>
+            <code>{roomEntry.room.inviteCode}</code>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
+  if (page === 'home') {
+    return (
+      <RoomEntryView
+        identity={{
+          anonymousId: settings.anonymous_id,
+          nickname: settings.nickname,
+          avatarId: settings.avatar_id,
+        }}
+        client={roomClient}
+        onEnterRoom={(entry) => {
+          setRoomEntry(entry)
+          setPage('room')
+        }}
+        onOpenSettings={() => setPage('settings')}
+      />
+    )
+  }
+
   return (
     <main className="settings-app settings-app--viewport">
       <section className="settings-card settings-card--wide" aria-labelledby="restored-settings-title">
@@ -242,7 +284,10 @@ function App() {
             <p className="settings-brand">echo</p>
             <h1 id="restored-settings-title" className="settings-card__title">你好，{settings.nickname}</h1>
           </div>
-          <button className="settings-button settings-button--secondary" type="button" disabled={saving} onClick={() => void resetAvatar()}>重新随机头像</button>
+          <div className="settings-header-actions">
+            <button className="settings-button settings-button--secondary" type="button" disabled={saving} onClick={() => setPage('home')}>返回首页</button>
+            <button className="settings-button settings-button--secondary" type="button" disabled={saving} onClick={() => void resetAvatar()}>重新随机头像</button>
+          </div>
         </header>
         <div className="settings-avatar-row">
           <div className="settings-avatar" aria-hidden="true">e</div>

@@ -25,6 +25,7 @@ func TestEnvLoadedStartupRouterCreatesRoomWithCredentials(t *testing.T) {
 	t.Setenv("ECHO_LIVEKIT_API_SECRET", "env-livekit-secret")
 	t.Setenv("ECHO_ROOM_SESSION_SECRET", "env-room-session-secret")
 	t.Setenv("ECHO_WS_ORIGIN_PATTERNS", "https://desktop-client.example")
+	t.Setenv("ECHO_HTTP_ORIGIN_PATTERNS", "https://desktop-client.example")
 	t.Setenv("ECHO_LOG_DIR", filepath.Join(t.TempDir(), "logs"))
 
 	cfg := config.FromEnv()
@@ -49,6 +50,7 @@ func TestEnvLoadedStartupRouterCreatesRoomWithCredentials(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/v1/rooms", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://desktop-client.example")
 	response := httptest.NewRecorder()
 	router := newRouter(cfg, db)
 
@@ -56,6 +58,9 @@ func TestEnvLoadedStartupRouterCreatesRoomWithCredentials(t *testing.T) {
 
 	if response.Code != http.StatusCreated {
 		t.Fatalf("POST /v1/rooms status = %d, want %d, body_bytes=%d", response.Code, http.StatusCreated, response.Body.Len())
+	}
+	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "https://desktop-client.example" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want configured desktop origin", got)
 	}
 	var created struct {
 		RoomSessionToken string `json:"room_session_token"`

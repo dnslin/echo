@@ -47,6 +47,11 @@ const firstLaunchSettings: Settings = {
   output_volume: 100,
 }
 
+async function openSettings(): Promise<void> {
+  fireEvent.click(await screen.findByRole('button', { name: '设置' }))
+  await screen.findByRole('button', { name: '保存设置' })
+}
+
 describe('App local settings entry', () => {
   beforeEach(() => {
     settingsBinding.load.mockResolvedValue(firstLaunchSettings)
@@ -112,7 +117,16 @@ describe('App local settings entry', () => {
     await waitFor(() => {
       expect(settingsBinding.save).toHaveBeenCalledWith({ ...firstLaunchSettings, nickname: '小王' })
     })
-    expect(await screen.findByText('你好，小王')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '创建或加入临时房间' })).toBeVisible()
+  })
+
+  it('shows the homepage for a saved nickname and opens settings on demand', async () => {
+    settingsBinding.load.mockResolvedValue({ ...firstLaunchSettings, nickname: '小李' })
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: '创建或加入临时房间' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    expect(await screen.findByRole('heading', { name: '你好，小李' })).toBeVisible()
   })
 
   it('renders the first nickname page in the desktop settings shell', async () => {
@@ -139,10 +153,11 @@ describe('App local settings entry', () => {
     })
   })
 
-  it('keeps restored users on settings form while nickname edits are unsaved', async () => {
+  it('keeps saved users on settings form while nickname edits are unsaved', async () => {
     settingsBinding.load.mockResolvedValue({ ...firstLaunchSettings, nickname: '小李' })
     render(<App />)
 
+    await openSettings()
     expect(await screen.findByRole('heading', { name: '你好，小李' })).toBeVisible()
     fireEvent.change(screen.getByLabelText('昵称'), { target: { value: '' } })
 
@@ -183,6 +198,7 @@ describe('App local settings entry', () => {
     settingsBinding.load.mockResolvedValue({ ...firstLaunchSettings, nickname: '小李' })
     render(<App />)
 
+    await openSettings()
     const nickname = await screen.findByLabelText('昵称')
     expect(nickname).not.toHaveAttribute('maxLength')
     fireEvent.change(nickname, { target: { value: nicknameValue } })
@@ -213,6 +229,7 @@ describe('App local settings entry', () => {
     settingsBinding.save.mockResolvedValue(persistedSettings)
     render(<App />)
 
+    await openSettings()
     await screen.findByText('你好，小李')
     await screen.findByRole('option', { name: 'Microphone Two' })
     fireEvent.change(screen.getByLabelText('快捷键'), { target: { value: 'B' } })
@@ -241,6 +258,7 @@ describe('App local settings entry', () => {
     settingsBinding.save.mockResolvedValue(persistedSettings)
     render(<App />)
 
+    await openSettings()
     const microphone = await screen.findByRole('combobox', { name: '麦克风设备' })
     const output = screen.getByRole('combobox', { name: '输出设备' })
     expect(screen.getByRole('main')).toHaveClass('settings-app--viewport')
@@ -269,6 +287,7 @@ describe('App local settings entry', () => {
     })
     render(<App />)
 
+    await openSettings()
     expect(await screen.findByText('检测到已保存的设备不可用，已改为跟随系统默认。')).toBeVisible()
     expect(screen.getByRole('combobox', { name: '麦克风设备' })).toHaveValue('')
     expect(screen.getByRole('combobox', { name: '输出设备' })).toHaveValue('')
@@ -285,6 +304,7 @@ describe('App local settings entry', () => {
     settingsBinding.load.mockResolvedValue(savedSettings)
     render(<App />)
 
+    await openSettings()
     expect(await screen.findByText('检测到已保存的设备不可用，已改为跟随系统默认。')).toBeVisible()
     expect(screen.getByRole('combobox', { name: '麦克风设备' })).toHaveValue('')
     expect(screen.getByRole('combobox', { name: '输出设备' })).toHaveValue('')
@@ -300,6 +320,7 @@ describe('App local settings entry', () => {
     settingsBinding.load.mockResolvedValue({ ...firstLaunchSettings, nickname: '小李' })
     render(<App />)
 
+    await openSettings()
     const deviceStatus = await screen.findByRole('status')
     expect(deviceStatus).toHaveTextContent('未获得麦克风权限，当前使用系统默认设备。')
     expect(deviceStatus).toHaveAttribute('aria-live', 'polite')
@@ -322,7 +343,7 @@ describe('App local settings entry', () => {
       expect(settingsBinding.save).toHaveBeenCalledTimes(2)
       expect(settingsBinding.save).toHaveBeenLastCalledWith({ ...firstLaunchSettings, nickname: '小王' })
     })
-    expect(await screen.findByText('本地设置已保存')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '创建或加入临时房间' })).toBeVisible()
   })
 
   it('shows restored settings and persists a reset avatar', async () => {
@@ -347,6 +368,7 @@ describe('App local settings entry', () => {
 
     render(<App />)
 
+    await openSettings()
     expect(await screen.findByText('你好，小李')).toBeVisible()
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: '麦克风设备' })).toHaveValue('mic-1')
@@ -365,6 +387,7 @@ describe('App local settings entry', () => {
     settingsBinding.resetAvatar.mockRejectedValue(new Error('reset avatar failed'))
     render(<App />)
 
+    await openSettings()
     await screen.findByText('你好，小李')
     fireEvent.click(screen.getByRole('button', { name: '重新随机头像' }))
 
@@ -390,6 +413,6 @@ describe('App local settings entry', () => {
     await waitFor(() => {
       expect(settingsBinding.load).toHaveBeenCalledTimes(2)
     })
-    expect(await screen.findByText('你好，小李')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '创建或加入临时房间' })).toBeVisible()
   })
 })
