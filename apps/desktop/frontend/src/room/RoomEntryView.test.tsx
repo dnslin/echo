@@ -76,6 +76,75 @@ describe('RoomEntryView', () => {
     expect(screen.getByText('小王的房间')).toBeVisible()
   })
 
+  it('returns to the homepage from the creation success page', async () => {
+    const client: RoomClient = {
+      createRoom: vi.fn().mockResolvedValue(createdEntry),
+      joinRoom: vi.fn(),
+    }
+
+    render(
+      <RoomEntryView
+        identity={{ anonymousId: 'anonymous-1', nickname: '小王', avatarId: 'avatar-1' }}
+        client={client}
+        onEnterRoom={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '创建房间' }))
+    await screen.findByRole('heading', { name: '房间已创建' })
+    fireEvent.click(screen.getByRole('button', { name: '返回首页' }))
+
+    expect(screen.getByRole('heading', { name: '创建或加入临时房间' })).toBeVisible()
+  })
+
+  it('clears the copy notice when returning to the homepage', async () => {
+    const client: RoomClient = {
+      createRoom: vi.fn().mockResolvedValue(createdEntry),
+      joinRoom: vi.fn(),
+    }
+    const copyText = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <RoomEntryView
+        identity={{ anonymousId: 'anonymous-1', nickname: '小王', avatarId: 'avatar-1' }}
+        client={client}
+        copyText={copyText}
+        onEnterRoom={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '创建房间' }))
+    await screen.findByRole('heading', { name: '房间已创建' })
+    fireEvent.click(screen.getByRole('button', { name: '复制邀请码' }))
+    await screen.findByRole('status')
+    fireEvent.click(screen.getByRole('button', { name: '返回首页' }))
+    await screen.findByRole('heading', { name: '创建或加入临时房间' })
+    fireEvent.click(screen.getByRole('button', { name: '创建房间' }))
+    await screen.findByRole('heading', { name: '房间已创建' })
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('shows the saved random avatar on the homepage', () => {
+    const client: RoomClient = {
+      createRoom: vi.fn(),
+      joinRoom: vi.fn(),
+    }
+
+    render(
+      <RoomEntryView
+        identity={{ anonymousId: 'anonymous-1', nickname: '小王', avatarId: 'avatar-1' }}
+        client={client}
+        onEnterRoom={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('avatar-1')).toBeVisible()
+  })
+
   it('copies an invite message and confirms the copy without a system notification', async () => {
     const client: RoomClient = {
       createRoom: vi.fn().mockResolvedValue(createdEntry),
@@ -164,8 +233,36 @@ describe('RoomEntryView', () => {
     fireEvent.change(inviteCode, { target: { value: 'K7M9Q2' } })
     fireEvent.click(screen.getByRole('button', { name: '加入房间' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(message)
+    expect(inviteCode).toHaveAccessibleDescription(message)
+    expect(inviteCode.closest('label')?.nextElementSibling).toBe(alert)
     expect(inviteCode).toHaveValue('K7M9Q2')
     expect(onEnterRoom).not.toHaveBeenCalled()
+  })
+
+  it('shows a creation error beneath the room name input', async () => {
+    const client: RoomClient = {
+      createRoom: vi.fn().mockRejectedValue({ code: 'room_name_too_long' }),
+      joinRoom: vi.fn(),
+    }
+
+    render(
+      <RoomEntryView
+        identity={{ anonymousId: 'anonymous-1', nickname: '小王', avatarId: 'avatar-1' }}
+        client={client}
+        onEnterRoom={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const roomName = screen.getByLabelText('房间名（可选）')
+    fireEvent.change(roomName, { target: { value: '今晚开黑' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建房间' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('房间名称最多 24 个字符')
+    expect(roomName).toHaveAccessibleDescription('房间名称最多 24 个字符')
+    expect(roomName.closest('label')?.nextElementSibling).toBe(alert)
   })
 })

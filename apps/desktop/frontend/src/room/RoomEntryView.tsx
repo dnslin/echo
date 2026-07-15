@@ -24,14 +24,15 @@ export function RoomEntryView({ identity, client, copyText, onEnterRoom, onOpenS
   const [createdEntry, setCreatedEntry] = useState<RoomEntry | null>(null)
   const [creating, setCreating] = useState(false)
   const [joining, setJoining] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [inviteErrorMessage, setInviteErrorMessage] = useState<string | null>(null)
+  const [roomNameErrorMessage, setRoomNameErrorMessage] = useState<string | null>(null)
   const [copyNotice, setCopyNotice] = useState<string | null>(null)
   const canJoin = inviteCodeIsValid && inviteCode.length === 6 && !joining
-  const visibleErrorMessage = inviteCodeIsValid ? errorMessage : '邀请码应为 6 位字母或数字'
+  const visibleInviteErrorMessage = inviteCodeIsValid ? inviteErrorMessage : '邀请码应为 6 位字母或数字'
 
   const createRoom = async () => {
     setCreating(true)
-    setErrorMessage(null)
+    setRoomNameErrorMessage(null)
     try {
       const name = roomName.trim()
       const entry = await client.createRoom({
@@ -42,7 +43,7 @@ export function RoomEntryView({ identity, client, copyText, onEnterRoom, onOpenS
       })
       setCreatedEntry(entry)
     } catch (error) {
-      setErrorMessage(roomEntryErrorMessage(error))
+      setRoomNameErrorMessage(roomEntryErrorMessage(error))
     } finally {
       setCreating(false)
     }
@@ -52,17 +53,22 @@ export function RoomEntryView({ identity, client, copyText, onEnterRoom, onOpenS
     const normalized = normalizeInviteCode(value)
     setInviteCode(normalized.value)
     setInviteCodeIsValid(normalized.isValid)
-    setErrorMessage(null)
+    setInviteErrorMessage(null)
+  }
+
+  const changeRoomName = (value: string) => {
+    setRoomName(value)
+    setRoomNameErrorMessage(null)
   }
 
   const joinRoom = async () => {
     if (!canJoin) {
-      setErrorMessage(inviteCode === '' ? '请输入邀请码' : '邀请码应为 6 位字母或数字')
+      setInviteErrorMessage(inviteCode === '' ? '请输入邀请码' : '邀请码应为 6 位字母或数字')
       return
     }
 
     setJoining(true)
-    setErrorMessage(null)
+    setInviteErrorMessage(null)
     try {
       const entry = await client.joinRoom({
         inviteCode,
@@ -72,7 +78,7 @@ export function RoomEntryView({ identity, client, copyText, onEnterRoom, onOpenS
       })
       onEnterRoom(entry)
     } catch (error) {
-      setErrorMessage(roomEntryErrorMessage(error))
+      setInviteErrorMessage(roomEntryErrorMessage(error))
     } finally {
       setJoining(false)
     }
@@ -87,6 +93,11 @@ export function RoomEntryView({ identity, client, copyText, onEnterRoom, onOpenS
     } catch {
       setCopyNotice('复制失败，请手动复制邀请码')
     }
+  }
+
+  const returnToHomepage = () => {
+    setCreatedEntry(null)
+    setCopyNotice(null)
   }
 
   if (createdEntry) {
@@ -104,6 +115,7 @@ export function RoomEntryView({ identity, client, copyText, onEnterRoom, onOpenS
           <div className="room-entry-actions">
             <button className="settings-button settings-button--secondary" type="button" onClick={() => void copyInviteCode()}>复制邀请码</button>
             <button className="settings-button settings-button--primary" type="button" onClick={() => onEnterRoom(createdEntry)}>进入房间</button>
+            <button className="settings-button settings-button--secondary" type="button" onClick={returnToHomepage}>返回首页</button>
           </div>
         </section>
       </main>
@@ -123,14 +135,17 @@ export function RoomEntryView({ identity, client, copyText, onEnterRoom, onOpenS
         <p className="room-entry-card__description">创建一个临时房间，或输入邀请码加入。</p>
         <div className="room-entry-identity">
           <span className="settings-avatar" aria-hidden="true">e</span>
-          <span>{identity.nickname}</span>
+          <div className="room-entry-identity__copy">
+            <span>{identity.nickname}</span>
+            <code>{identity.avatarId}</code>
+          </div>
         </div>
         <label className="settings-field">
           <span className="settings-field__label">邀请码</span>
           <div className="room-entry-invite-input">
             <input
-              aria-describedby={visibleErrorMessage ? 'room-entry-error' : undefined}
-              aria-invalid={!inviteCodeIsValid}
+              aria-describedby={visibleInviteErrorMessage ? 'room-entry-invite-error' : undefined}
+              aria-invalid={!inviteCodeIsValid || inviteErrorMessage !== null}
               autoComplete="off"
               className="room-entry-invite-input__control"
               inputMode="text"
@@ -142,14 +157,21 @@ export function RoomEntryView({ identity, client, copyText, onEnterRoom, onOpenS
             </span>
           </div>
         </label>
+        {visibleInviteErrorMessage && <p id="room-entry-invite-error" className="room-entry-error" role="alert">{visibleInviteErrorMessage}</p>}
         <div className="room-entry-actions">
           <button className="settings-button settings-button--primary" type="button" disabled={!canJoin || creating} onClick={() => void joinRoom()}>{joining ? '正在加入…' : '加入房间'}</button>
         </div>
         <label className="settings-field">
           <span className="settings-field__label">房间名（可选）</span>
-          <input className="settings-field__control" value={roomName} onChange={(event) => setRoomName(event.target.value)} />
+          <input
+            aria-describedby={roomNameErrorMessage ? 'room-entry-room-name-error' : undefined}
+            aria-invalid={roomNameErrorMessage !== null}
+            className="settings-field__control"
+            value={roomName}
+            onChange={(event) => changeRoomName(event.target.value)}
+          />
         </label>
-        {visibleErrorMessage && <p id="room-entry-error" className="room-entry-error" role="alert">{visibleErrorMessage}</p>}
+        {roomNameErrorMessage && <p id="room-entry-room-name-error" className="room-entry-error" role="alert">{roomNameErrorMessage}</p>}
         <div className="room-entry-actions">
           <button className="settings-button settings-button--secondary" type="button" disabled={creating || joining} onClick={() => void createRoom()}>{creating ? '正在创建…' : '创建房间'}</button>
         </div>

@@ -416,10 +416,22 @@ select {
   font-size: 14px;
 }
 
-.room-entry-identity > span:last-child {
+.room-entry-identity__copy {
+  min-width: 0;
+}
+
+.room-entry-identity__copy > span,
+.room-entry-identity__copy > code {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.room-entry-identity__copy > code {
+  color: #647282;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .room-entry-invite-input {
@@ -442,6 +454,12 @@ select {
   background: transparent;
   color: transparent;
   caret-color: #0b63f6;
+}
+
+.room-entry-invite-input__control:focus-visible {
+  outline: 3px solid #73a7ff;
+  outline-offset: 2px;
+  border-radius: 10px;
 }
 
 .room-entry-invite-input__slots {
