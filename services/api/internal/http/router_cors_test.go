@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"echo/services/api/internal/config"
 )
 
 func TestCORSAllowsConfiguredDevelopmentOriginPreflight(t *testing.T) {
@@ -30,6 +32,25 @@ func TestCORSAllowsConfiguredDevelopmentOriginPreflight(t *testing.T) {
 	}
 	if got := response.Header().Get("Vary"); got != "Origin" {
 		t.Fatalf("Vary = %q, want %q", got, "Origin")
+	}
+}
+
+func TestCORSAllowsDefaultWailsDevelopmentOriginPreflight(t *testing.T) {
+	origin := "http://wails.localhost:9245"
+	router := NewRouter(WithCORSOriginPatterns(config.Default().HTTPOriginPatterns))
+	request := httptest.NewRequest(http.MethodOptions, "/v1/rooms/join", nil)
+	request.Header.Set("Origin", origin)
+	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	request.Header.Set("Access-Control-Request-Headers", "Content-Type")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("OPTIONS /v1/rooms/join status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	if got := response.Header().Get("Access-Control-Allow-Origin"); got != origin {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, origin)
 	}
 }
 

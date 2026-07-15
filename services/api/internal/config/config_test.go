@@ -22,6 +22,7 @@ func TestDefaultHTTPOriginPatternsAreExplicitAndNotWildcard(t *testing.T) {
 	wantOrigins := []string{
 		"http://localhost:*",
 		"http://127.0.0.1:*",
+		"http://wails.localhost:*",
 		"wails://wails.localhost",
 		"wails://wails.localhost:*",
 	}
