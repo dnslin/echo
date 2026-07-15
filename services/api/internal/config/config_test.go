@@ -17,6 +17,24 @@ func TestDefaultWebSocketOriginPatternsAreExplicitAndNotWildcard(t *testing.T) {
 	}
 }
 
+func TestDefaultHTTPOriginPatternsAreExplicitAndNotWildcard(t *testing.T) {
+	cfg := Default()
+	wantOrigins := []string{
+		"http://localhost:*",
+		"http://127.0.0.1:*",
+		"wails://wails.localhost",
+		"wails://wails.localhost:*",
+	}
+	if len(cfg.HTTPOriginPatterns) != len(wantOrigins) {
+		t.Fatalf("HTTPOriginPatterns = %#v, want %#v", cfg.HTTPOriginPatterns, wantOrigins)
+	}
+	for index, want := range wantOrigins {
+		if cfg.HTTPOriginPatterns[index] != want {
+			t.Fatalf("HTTPOriginPatterns[%d] = %q, want %q", index, cfg.HTTPOriginPatterns[index], want)
+		}
+	}
+}
+
 func TestDefaultCredentialTTLsAreExplicit(t *testing.T) {
 	cfg := Default()
 	if cfg.RoomSessionTokenTTL != 2*time.Hour {
@@ -35,6 +53,7 @@ func TestFromEnvLoadsDocumentedEnvironmentValues(t *testing.T) {
 	t.Setenv("ECHO_LIVEKIT_API_SECRET", "env-livekit-secret")
 	t.Setenv("ECHO_ROOM_SESSION_SECRET", "env-room-session-secret")
 	t.Setenv("ECHO_WS_ORIGIN_PATTERNS", "https://client.example, http://localhost:5173 ")
+	t.Setenv("ECHO_HTTP_ORIGIN_PATTERNS", "https://desktop-client.example, wails://wails.localhost")
 	t.Setenv("ECHO_LOG_DIR", "./env-logs")
 
 	cfg := FromEnv()
@@ -67,6 +86,15 @@ func TestFromEnvLoadsDocumentedEnvironmentValues(t *testing.T) {
 	for i, want := range wantOrigins {
 		if cfg.WebSocketOriginPatterns[i] != want {
 			t.Fatalf("WebSocketOriginPatterns[%d] = %q, want %q", i, cfg.WebSocketOriginPatterns[i], want)
+		}
+	}
+	wantHTTPOrigins := []string{"https://desktop-client.example", "wails://wails.localhost"}
+	if len(cfg.HTTPOriginPatterns) != len(wantHTTPOrigins) {
+		t.Fatalf("HTTPOriginPatterns = %#v, want %#v", cfg.HTTPOriginPatterns, wantHTTPOrigins)
+	}
+	for i, want := range wantHTTPOrigins {
+		if cfg.HTTPOriginPatterns[i] != want {
+			t.Fatalf("HTTPOriginPatterns[%d] = %q, want %q", i, cfg.HTTPOriginPatterns[i], want)
 		}
 	}
 	if cfg.RoomSessionTokenTTL != 2*time.Hour {
